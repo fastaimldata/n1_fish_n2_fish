@@ -83,7 +83,7 @@ def priors_from_model(model):
     return all_priors
 
 
-def display_img_with_rects(img, results, res_idx=0):
+def display_img_with_rects(img, results, res_idx=0, conf_threshold=0.1):
     if len(results[res_idx]) == 0:
         plt.imshow(img / 255.)
     else:
@@ -95,7 +95,7 @@ def display_img_with_rects(img, results, res_idx=0):
         det_ymax = results[res_idx][:, 5]
 
         # Get detections with confidence higher than 0.6.
-        top_indices = [i for i, conf in enumerate(det_conf) if conf >= 0.3]
+        top_indices = [i for i, conf in enumerate(det_conf) if conf >= conf_threshold]
         # max_conf = max(0.7, max(det_conf))
         # top_indices_conf = sorted([(conf, i) for i, conf in enumerate(det_conf) if conf >= 0.1], reverse=True)
         # top_indices = [i for c, i in top_indices_conf[:8]]
@@ -225,7 +225,8 @@ class SSDDataset(fish_detection.FishDetectionDataset):
     def generate_x_from_precomputed_crop(self, cfg: SampleCfg):
         crop = scipy.misc.imread(dataset.image_crop_fn(cfg.detection.clip_name, cfg.detection.frame))
         crop = crop.astype('float32')
-        return crop*255.0
+        # print('crop max val:', np.max(crop))
+        return crop
 
     def generate_ssd(self, batch_size, is_training, verbose=False, skip_assign_boxes=False, always_shuffle=False):
         pool = ThreadPool(processes=8)
@@ -285,11 +286,10 @@ class SSDDataset(fish_detection.FishDetectionDataset):
 
                     yield x, y
 
-    def generate_x_for_train_video_id(self, video_id, batch_size):
-        pool = ThreadPool(processes=8)
-
+    def generate_x_for_train_video_id(self, video_id, batch_size, pool, frames=None):
         detections = []  # type: List[fish_detection.FishDetection]
-        for frame_id in range(len(dataset.video_clips()[video_id])):
+        frames_to_use = frames if frames is not None else range(len(dataset.video_clips()[video_id]))
+        for frame_id in frames_to_use:
             detections.append(
                 fish_detection.FishDetection(
                     clip_name=video_id,
@@ -301,21 +301,30 @@ class SSDDataset(fish_detection.FishDetectionDataset):
                 )
             )
 
+        def output_samples(samples_to_process):
+            inputs = []
+            for img in pool.map(self.generate_x_from_precomputed_crop, samples_to_process):
+                inputs.append(img)
+
+            frames = [cfg.detection.frame for cfg in samples_to_process]
+
+            tmp_inp = np.array(inputs)
+            inputs.clear()  # lets return some memory earlier
+            x = self.preprocess_input(tmp_inp)
+            return x, frames
+
         samples_to_process = []
         for detection in detections:
             cfg = SampleCfg(detection=detection, transformation=None)
             samples_to_process.append(cfg)
 
             if len(samples_to_process) >= batch_size:
-                inputs = []
-                for img in pool.map(self.generate_x_from_precomputed_crop, samples_to_process):
-                    inputs.append(img)
-
-                tmp_inp = np.array(inputs)
-                inputs.clear()  # lets return some memory earlier
+                yield output_samples(samples_to_process)
                 samples_to_process = []
-                x = self.preprocess_input(tmp_inp)
-                yield x
+
+        if len(samples_to_process) > 0:
+            yield output_samples(samples_to_process)
+
 
 
 def check_dataset():
@@ -479,6 +488,8 @@ def check_on_train_clip(video_id, weights, suffix):
     else:
         model = build_model(input_shape)
 
+    pool = ThreadPool(processes=8)
+
     model.compile(loss=MultiboxLoss(NUM_CLASSES, neg_pos_ratio=2.0, pos_cost_multiplier=1.0).compute_loss,
                   optimizer=Adam(lr=1e-3))
     model.load_weights(weights)
@@ -493,10 +504,11 @@ def check_on_train_clip(video_id, weights, suffix):
     batch_size = 4
 
     frame_id = 0
-    for x_batch in dataset.generate_x_for_train_video_id(video_id=video_id, batch_size=batch_size):
+    for x_batch in dataset.generate_x_for_train_video_id(video_id=video_id, batch_size=batch_size, pool=pool):
         predictions = model.predict(x_batch)
         results = bbox_util.detection_out(predictions)
         for batch_id in range(predictions.shape[0]):
+            print(results[batch_id])
             display_img_with_rects(img=utils.preprocessed_input_to_img_resnet(x_batch[batch_id]) * 255,
                                    results=results,
                                    res_idx=batch_id)
@@ -506,7 +518,7 @@ def check_on_train_clip(video_id, weights, suffix):
             print(frame_id)
 
 
-def generate_predictions_on_train_clips(weights, suffix):
+def generate_predictions_on_train_clips(weights, suffix, from_idx, count, use_requested_frames=False):
     if 'resnet' in weights:
         model = build_resnet(input_shape)
     else:
@@ -523,156 +535,38 @@ def generate_predictions_on_train_clips(weights, suffix):
 
     items = list(sorted(dataset.video_clips.keys()))
 
-    # for video_id in items[25:len(items) // 2]:
-    # for video_id in items[items.index('nn4TF4Rt13lIjml0'):]:
-    for video_id in items[items.index('KxOtzGLV9wZFsNyZ'):len(items) // 2]:
+    requested_frames = pickle.load(open('../output/used_frames.pkl', 'rb'))
+
+    pool = ThreadPool(processes=4)
+
+    for video_id in items[from_idx: from_idx+count]:
         print(video_id)
-        outdir = '../output/predictions_ssd_roi/{}/{}'.format(suffix, video_id)
+        outdir = '../output/predictions_ssd_roi2/{}/{}'.format(suffix, video_id)
         os.makedirs(outdir, exist_ok=True)
         batch_size = 4
 
-        frame_id = 0
-        for x_batch in dataset.generate_x_for_train_video_id(video_id=video_id, batch_size=batch_size):
+        if use_requested_frames:
+            frames = requested_frames[video_id]
+        else:
+            frames = list(range(len(dataset.video_clips[video_id])))
+
+        new_frames = []
+        for frame in frames:
+            if not os.path.exists('{}/{:04}.npy'.format(outdir, frame+1)):
+                new_frames.append(frame)
+
+        if len(new_frames) == 0:
+            continue
+
+        for x_batch, used_frames in dataset.generate_x_for_train_video_id(video_id=video_id,
+                                                                          batch_size=batch_size,
+                                                                          frames=new_frames,
+                                                                          pool=pool):
             predictions = model.predict(x_batch)
             results = bbox_util.detection_out(predictions)
             for batch_id in range(predictions.shape[0]):
-                np.save('{}/{:04}.npy'.format(outdir, frame_id+1), results[batch_id])
-                frame_id += 1
-                print(frame_id)
-
-
-def check_on_test(from_idx, to_idx):
-    test_dir = '../dataset/Test/'
-
-    model = build_model(input_shape)
-
-    model.compile(loss=MultiboxLoss(NUM_CLASSES, neg_pos_ratio=2.0, pos_cost_multiplier=1.0).compute_loss,
-                  optimizer=Adam(lr=1e-3))
-    model.load_weights('/home/dmytro/data/fish/checkpoints/detect_ssd/ssd_900/checkpoint-best-260-0.8478.hdf5')
-    model.summary()
-
-    priors = priors_from_model(model)
-    bbox_util = BBoxUtility(NUM_CLASSES, priors)
-
-    for fn_idx in range(from_idx, to_idx):
-        print(fn_idx)
-        fn = '{}.jpg'.format(fn_idx)
-        with Image.open(test_dir + fn) as image:
-            img = np.asarray(image).astype(np.float32)
-            roi = find_img_crops(model, bbox_util=bbox_util, img=img, scale=0.5)
-            display_all_roi(img, roi, scale=0.5)
-
-            plt.figure()
-            roi = find_img_crops(model, bbox_util=bbox_util, img=img, scale=1.0)
-            display_all_roi(img, roi, scale=1.0)
-            plt.show()
-
-
-def gen_roi_for_train_dataset(from_idx, to_idx):
-    out_dir = '../dataset/train_ssd_out'
-    os.makedirs(out_dir, exist_ok=True)
-
-    model = build_model(input_shape)
-
-    model.compile(loss=MultiboxLoss(NUM_CLASSES, neg_pos_ratio=2.0, pos_cost_multiplier=1.0).compute_loss,
-                  optimizer=Adam(lr=1e-3))
-    model.load_weights('/home/dmytro/data/fish/checkpoints/detect_ssd/ssd_900/checkpoint-101-1.2016.hdf5')
-    model.summary()
-
-    priors = priors_from_model(model)
-    bbox_util = BBoxUtility(NUM_CLASSES, priors)
-    dataset = SSDDataset(bbox_util=bbox_util, crop_size=crop_size)
-
-    for train_idx in dataset.all_keys:
-        if train_idx < from_idx:
-            continue
-
-        if train_idx >= to_idx:
-            break
-
-        print('idx', train_idx)
-        with utils.timeit_context('process image'):
-            all_scale_roi = []
-            img = dataset.load_img(train_idx)
-
-            for scale in [0.4, 0.5, 0.65, 0.8, 1.0, 1.4, 1.8, 2.6]:
-                print(scale)
-                roi = find_img_crops(model, bbox_util=bbox_util, img=img, scale=scale)
-                all_scale_roi.append(dict(train_idx=train_idx,
-                                          orig_scale=dataset.items_scale.get(train_idx, 1.0),
-                                          extra_scale=scale,
-                                          ssd_roi=roi))
-
-            pickle.dump(all_scale_roi, open('{}/{}.pkl'.format(out_dir, train_idx), 'wb'))
-
-
-def gen_roi_for_test_dataset(from_idx, to_idx):
-    out_dir = '../dataset/test_ssd_out'
-    os.makedirs(out_dir, exist_ok=True)
-
-    model = build_model(input_shape)
-
-    model.compile(loss=MultiboxLoss(NUM_CLASSES, neg_pos_ratio=2.0, pos_cost_multiplier=1.0).compute_loss,
-                  optimizer=Adam(lr=1e-3))
-    model.load_weights('/home/dmytro/data/fish/checkpoints/detect_ssd/ssd_900/checkpoint-101-1.2016.hdf5')
-    model.summary()
-
-    priors = priors_from_model(model)
-    bbox_util = BBoxUtility(NUM_CLASSES, priors)
-
-    for train_idx in range(from_idx, to_idx):
-
-        print('idx', train_idx)
-        with utils.timeit_context('process image'):
-            all_scale_roi = []
-            img = imread('../dataset/Test/{}.jpg'.format(train_idx))
-
-            for scale in [0.5]:
-                print(scale)
-                roi = find_img_crops(model, bbox_util=bbox_util, img=img, scale=scale)
-                all_scale_roi.append(dict(train_idx=train_idx,
-                                          orig_scale=1.0,
-                                          extra_scale=scale,
-                                          ssd_roi=roi))
-
-            pickle.dump(all_scale_roi, open('{}/{}_50.pkl'.format(out_dir, train_idx), 'wb'))
-
-
-def gen_roi_for_test_dataset_stage_2(from_idx, to_idx):
-    out_dir = '../dataset/test_ssd_out_stage_2'
-    os.makedirs(out_dir, exist_ok=True)
-
-    model = build_model(input_shape)
-
-    model.compile(loss=MultiboxLoss(NUM_CLASSES, neg_pos_ratio=2.0, pos_cost_multiplier=1.0).compute_loss,
-                  optimizer=Adam(lr=1e-3))
-    model.load_weights('/home/dmytro/data/fish/checkpoints/detect_ssd/ssd_900/checkpoint-101-1.2016.hdf5')
-    model.summary()
-
-    priors = priors_from_model(model)
-    bbox_util = BBoxUtility(NUM_CLASSES, priors)
-
-    predicted1_scale = {}
-    scale_dataset = np.genfromtxt('results/test_scale.csv', delimiter=',')
-    for i, scale in scale_dataset:
-        predicted1_scale[i] = scale
-
-    for train_idx in range(from_idx, to_idx):
-
-        print('idx', train_idx)
-        with utils.timeit_context('process image'):
-            all_scale_roi = []
-            img = imread('../dataset/Test/{}.jpg'.format(train_idx))
-
-            scale = 1.0/predicted1_scale.get(train_idx, 0.6)
-            print('{:.2f}'.format(scale))
-            roi = find_img_crops(model, bbox_util=bbox_util, img=img, scale=scale)
-            all_scale_roi.append(dict(train_idx=train_idx,
-                                      orig_scale=1.0,
-                                      extra_scale=scale,
-                                      ssd_roi=roi))
-
-            pickle.dump(all_scale_roi, open('{}/{}_stage2.pkl'.format(out_dir, train_idx), 'wb'))
+                np.save('{}/{:04}.npy'.format(outdir, used_frames[batch_id]+1), results[batch_id])
+                print(used_frames[batch_id])
 
 
 if __name__ == '__main__':
@@ -687,16 +581,8 @@ if __name__ == '__main__':
     elif action == 'check_on_train_clip':
         check_on_train_clip(video_id=sys.argv[2], weights=sys.argv[3], suffix=sys.argv[4])
     elif action == 'generate_predictions_on_train_clips':
-        generate_predictions_on_train_clips(weights=sys.argv[2], suffix=sys.argv[3])
+        generate_predictions_on_train_clips(weights=sys.argv[2], suffix=sys.argv[3], from_idx=int(sys.argv[4]), count=int(sys.argv[5]))
     elif action == 'check_dataset':
         check_dataset()
-    elif action == 'check_test':
-        check_on_test(int(sys.argv[2]), 160000)
-    elif action == 'gen_roi_for_train_dataset':
-        gen_roi_for_train_dataset(int(sys.argv[2]), int(sys.argv[3]))
-    elif action == 'gen_roi_for_test_dataset':
-        gen_roi_for_test_dataset(int(sys.argv[2]), int(sys.argv[3]))
-    elif action == 'gen_roi_for_test_dataset_stage_2':
-        gen_roi_for_test_dataset_stage_2(int(sys.argv[2]), int(sys.argv[3]))
 
 

@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from typing import List
 import pickle
 import os
 
@@ -11,6 +12,7 @@ RULER_CROPS_DIR = '../output/ruler_crops'
 
 SPECIES = ['fourspot', 'grey sole', 'other', 'plaice', 'summer', 'windowpane', 'winter']
 CLASSES = ['_'] + SPECIES
+NB_FOLDS = 4
 
 ASPECT_RATIO_TABLE = {
     # '_': 0.1,
@@ -41,6 +43,14 @@ def video_clips() -> {str}:
 
         pickle.dump(clips, open(cache_fn, 'wb'))
     return clips
+
+
+def fold_test_video_ids(fold: int) -> List[str]:
+    all_video_ids = sorted(video_clips().keys())
+
+    if fold == 0:
+        return []
+    return all_video_ids[(fold-1)::NB_FOLDS]
 
 
 def image_fn(clip_name, frame):

@@ -171,6 +171,7 @@ class Dataset:
         pool = ThreadPool(processes=8)
         samples_to_process = []  # type: [SampleCfg]
 
+
         while True:
             img_idx = random.choice(self.train_idx)
             cfg = SampleCfg(img_idx=img_idx)

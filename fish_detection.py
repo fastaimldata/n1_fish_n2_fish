@@ -68,7 +68,7 @@ class FishDetectionDataset:
             )
         return detections
 
-    def transform_for_clip(self, clip_name, dst_w, dst_h, points_random_shift=0):
+    def transform_for_clip(self, clip_name, dst_w=720, dst_h=360, points_random_shift=0):
         points = self.ruler_points[clip_name]
 
         ruler_points = np.array([[points.x1, points.y1], [points.x2, points.y2]])

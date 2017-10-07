@@ -136,7 +136,7 @@ def get_image_crop(full_rgb, rect, scale_rect_x=1.0, scale_rect_y=1.0,
     tform = AffineTransform(rotation=angle * math.pi / 180) + tform
     tform = AffineTransform(scale=(1 / scale_x, 1 / scale_y)) + tform
     tform = AffineTransform(translation=(-out_center, -out_center)) + tform
-    return skimage.transform.warp(full_rgb, tform, mode='edge', order=2, output_shape=(out_size, out_size))
+    return skimage.transform.warp(full_rgb, tform, mode='edge', order=3, output_shape=(out_size, out_size))
 
 
 def crop_zero_pad(img, x, y, w, h):
