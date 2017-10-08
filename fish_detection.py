@@ -10,12 +10,15 @@ from sklearn.model_selection import train_test_split
 import dataset
 from dataset import SPECIES, CLASSES
 
+EXTRA_LABELS_BASE_DIR = '../output/ruler_crops_batch_labeled'
+EXTRA_LABELS_BATCHES = ['0', '100', '400', '500']
+
 INPUT_ROWS = 720
 INPUT_COLS = 360
 input_shape = (INPUT_ROWS, INPUT_COLS, 3)
 NUM_CLASSES = len(CLASSES)
 
-FishDetection = namedtuple('FishDetection', ['clip_name', 'frame', 'fish_number', 'x1', 'y1', 'x2', 'y2', 'class_id'])
+FishDetection = namedtuple('FishDetection', ['video_id', 'frame', 'fish_number', 'x1', 'y1', 'x2', 'y2', 'class_id'])
 RulerPoints = namedtuple('RulerPoints', ['x1', 'y1', 'x2', 'y2'])
 
 
@@ -32,8 +35,8 @@ class FishDetectionDataset:
             pickle.dump(self.detections, open(cache_fn, 'wb'))
 
         self.train_clips, self.test_clips = train_test_split(sorted(self.detections.keys()),
-                                                             test_size=0.1,
-                                                             random_state=42)
+                                                             test_size=0.05,
+                                                             random_state=12)
 
         self.nb_train_samples = sum([len(self.detections[clip]) for clip in self.train_clips])
         self.nb_test_samples = sum([len(self.detections[clip]) for clip in self.test_clips])
@@ -52,13 +55,13 @@ class FishDetectionDataset:
         cls_column[np.max(species, axis=1) == 0] = 0
 
         for row_id, row in ds.iterrows():
-            clip_name = row.video_id
-            if clip_name not in detections:
-                detections[clip_name] = []
+            video_id = row.video_id
+            if video_id not in detections:
+                detections[video_id] = []
 
-            detections[clip_name].append(
+            detections[video_id].append(
                 FishDetection(
-                    clip_name=clip_name,
+                    video_id=video_id,
                     frame=row.frame,
                     fish_number=row.fish_number,
                     x1=row.x1, y1=row.y1,
@@ -66,10 +69,34 @@ class FishDetectionDataset:
                     class_id=int(cls_column[row_id])
                 )
             )
+        # load labeled no fish images
+        for extra_batch in EXTRA_LABELS_BATCHES:
+            cover_class = 'no fish'
+            for fn in os.listdir(os.path.join(EXTRA_LABELS_BASE_DIR, extra_batch, cover_class)):
+                if not fn.endswith('.jpg'):
+                    continue
+                # file name format: video_frame.jpg
+                fn = fn[:-len('.jpg')]
+                video_id, frame = fn.split('_')
+                frame = int(frame) - 1
+
+                if video_id not in detections:
+                    detections[video_id] = []
+
+                detections[video_id].append(
+                    FishDetection(
+                        video_id=video_id,
+                        frame=frame,
+                        fish_number=0,
+                        x1=np.nan, y1=np.nan,
+                        x2=np.nan, y2=np.nan,
+                        class_id=0
+                    )
+                )
         return detections
 
-    def transform_for_clip(self, clip_name, dst_w=720, dst_h=360, points_random_shift=0):
-        points = self.ruler_points[clip_name]
+    def transform_for_clip(self, video_id, dst_w=720, dst_h=360, points_random_shift=0):
+        points = self.ruler_points[video_id]
 
         ruler_points = np.array([[points.x1, points.y1], [points.x2, points.y2]])
         img_points = np.array([[dst_w * 0.1, dst_h / 2], [dst_w * 0.9, dst_h / 2]])

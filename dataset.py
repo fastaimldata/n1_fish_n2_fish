@@ -53,9 +53,9 @@ def fold_test_video_ids(fold: int) -> List[str]:
     return all_video_ids[(fold-1)::NB_FOLDS]
 
 
-def image_fn(clip_name, frame):
-    return '{}/{}/{:04}.jpg'.format(IMAGES_DIR, clip_name, int(frame)+1)
+def image_fn(video_id, frame):
+    return '{}/{}/{:04}.jpg'.format(IMAGES_DIR, video_id, int(frame)+1)
 
 
-def image_crop_fn(clip_name, frame):
-    return '{}/{}/{:04}.jpg'.format(RULER_CROPS_DIR, clip_name, int(frame)+1)
+def image_crop_fn(video_id, frame):
+    return '{}/{}/{:04}.jpg'.format(RULER_CROPS_DIR, video_id, int(frame)+1)

@@ -2,8 +2,11 @@ import matplotlib as mpl
 from matplotlib import pyplot as plt
 import matplotlib.image as mpimg
 import numpy as np
+import pandas as pd
 import sys
+import shutil
 import os
+import dataset
 
 # RULER_CROPS_DIR = '.'
 RULER_CROPS_DIR = '../output/ruler_crops'
@@ -124,8 +127,22 @@ def generate_batches(srd_dir, dest_dir):
                     break
 
 
-generate_batches('../output/ruler_crops', '../output/ruler_crops_batch')
-
-
+# generate_batches('../output/ruler_crops', '../output/ruler_crops_batch')
 # label = CropsLabeler(sorted(os.listdir(sys.argv[1:])))
 
+
+def check_orig_dataset():
+    output_dir = '../output/orig_ds_crops'
+    os.makedirs(output_dir, exist_ok=True)
+
+    df = pd.read_csv('../input/N1_fish_N2_fish_-_Training_set_annotations.csv')
+    for _, row in df.iterrows():
+        video_id = row.video_id
+        frame = row.frame
+        length = row.length
+
+        if not np.isnan(length):
+            shutil.copy(dataset.image_crop_fn(video_id, frame),
+                        os.path.join(output_dir, '{}_{:04}.jpg'.format(video_id, frame)))
+
+check_orig_dataset()

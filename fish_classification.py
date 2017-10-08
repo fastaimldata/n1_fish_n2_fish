@@ -1,6 +1,7 @@
 from collections import namedtuple
 
 import numpy as np
+import pandas as pd
 import skimage
 import skimage.transform
 from typing import Union
@@ -22,6 +23,7 @@ from keras.utils import to_categorical
 import matplotlib.pyplot as plt
 from PIL import Image
 from copy import copy
+import concurrent.futures
 
 from multiprocessing.pool import ThreadPool
 from typing import List, Dict
@@ -45,6 +47,8 @@ EXTRA_LABELS_BATCHES = ['0', '100', '400', '500']
 CROP_WIDTH = 720
 CROP_HEIGHT = 360
 
+# INPUT_ROWS = 224
+# INPUT_COLS = 224
 INPUT_ROWS = 300
 INPUT_COLS = 300
 INPUT_SHAPE = (INPUT_ROWS, INPUT_COLS, 3)
@@ -120,12 +124,16 @@ class SampleCfg:
 
     def __init__(self,
                  fish_classification: FishClassification,
-                 saturation=0.5, contrast=0.5, brightness=0.5,  # 0.5  - no changes, range 0..1
+                 saturation=0.5, contrast=0.5, brightness=0.5, color_shift=0.5,  # 0.5  - no changes, range 0..1
                  scale_rect_x=1.0, scale_rect_y=1.0,
                  shift_x_ratio=0.0, shift_y_ratio=0.0,
                  angle=0.0,
                  hflip=False,
-                 vflip=False):
+                 vflip=False,
+                 random_pos=False,
+                 ssd_detection=None):
+        self.color_shift = color_shift
+        self.ssd_detection = ssd_detection
         self.angle = angle
         self.shift_x_ratio = shift_x_ratio
         self.shift_y_ratio = shift_y_ratio
@@ -141,14 +149,14 @@ class SampleCfg:
 
         w = np.clip(fish_classification.w + 64, 200, 360)
         x = fish_classification.x
-        y = np.clip(fish_classification.y, CROP_HEIGHT/2 - 64, CROP_HEIGHT/2 + 64)
+        y = np.clip(fish_classification.y, CROP_HEIGHT / 2 - 64, CROP_HEIGHT / 2 + 64)
 
-        if fish_classification.cover_class == CLASS_NO_FISH_ID:
+        if random_pos or (fish_classification.cover_class == CLASS_NO_FISH_ID and abs(x) < 0.01):
             w = random.randrange(200, 360)
-            x = random.randrange(200, CROP_WIDTH-200)
-            y = random.randrange(CROP_HEIGHT/2 - 64, CROP_HEIGHT/2 + 64)
+            x = random.randrange(200, CROP_WIDTH - 200)
+            y = random.randrange(CROP_HEIGHT / 2 - 64, CROP_HEIGHT / 2 + 64)
 
-        self.rect = Rect(x=x-w/2, y=y-w/2, w=w, h=w)
+        self.rect = Rect(x=x - w / 2, y=y - w / 2, w=w, h=w)
 
     def __lt__(self, other):
         return True
@@ -157,8 +165,8 @@ class SampleCfg:
         return dataset.CLASSES[self.fish_classification.species_class] + ' ' + str(self.__dict__)
 
 
-def load_ssd_detection(video_id, frame_id) -> SSDDetection:
-    fn = '../output/predictions_ssd_roi2/vgg_41/{}/{:04}.npy'.format(video_id, frame_id + 1)
+def load_ssd_detection(video_id, frame_id, data_dir='../output/predictions_ssd_roi2/vgg_41') -> SSDDetection:
+    fn = os.path.join(data_dir, video_id, '{:04}.npy'.format(frame_id + 1))
     try:
         results = np.load(fn)
     except FileNotFoundError:
@@ -211,7 +219,13 @@ class ClassificationDataset(fish_detection.FishDetectionDataset):
 
         self.train_data = [d for d in self.data if d.video_id in self.train_video_ids]
         self.test_data_full = [d for d in self.data if d.video_id in self.test_video_ids]
-        self.test_data = self.test_data_full[::4]
+        self.test_data = self.test_data_full[::2]
+
+        self.test_data_for_clip = {}
+        for d in self.test_data_full:
+            if not d.video_id in self.test_data_for_clip:
+                self.test_data_for_clip[d.video_id] = []
+            self.test_data_for_clip[d.video_id].append(d)
 
         self.crops_cache = {}
 
@@ -239,10 +253,10 @@ class ClassificationDataset(fish_detection.FishDetectionDataset):
                 used_frames[video_id].add(detection.frame)
 
                 if detection.class_id != 0:
-                    if detection.clip_name not in known_species:
-                        known_species[detection.clip_name] = {}
-                    known_species[detection.clip_name][detection.frame] = detection.class_id
-                    ssd_detection = load_ssd_detection(detection.clip_name, detection.frame)
+                    if detection.video_id not in known_species:
+                        known_species[detection.video_id] = {}
+                    known_species[detection.video_id][detection.frame] = detection.class_id
+                    ssd_detection = load_ssd_detection(detection.video_id, detection.frame)
                     if ssd_detection is not None:
                         data.append(
                             FishClassification(
@@ -255,9 +269,9 @@ class ClassificationDataset(fish_detection.FishDetectionDataset):
                 else:
                     data.append(
                         FishClassification(
-                            video_id=detection.clip_name,
+                            video_id=detection.video_id,
                             frame=detection.frame,
-                            x=0, y=0, w=0, species_class=0, cover_class=CLASS_NO_FISH_ID
+                            x=0, y=0, w=0, species_class=0, cover_class=CLASS_NO_FISH_ID,
                         )
                     )
         print('base size:', len(data))
@@ -283,24 +297,24 @@ class ClassificationDataset(fish_detection.FishDetectionDataset):
                                     x=0, y=0, w=0, species_class=0, cover_class=cover_class_id
                                 )
                             )
-                        else:
-                            ssd_detection = load_ssd_detection(video_id, frame)
-                            species_class = guess_species(known_species[video_id], frame)
-                            if ssd_detection is not None and species_class is not None:
-                                data.append(
-                                    FishClassification(
-                                        video_id=video_id,
-                                        frame=frame,
-                                        x=ssd_detection.x, y=ssd_detection.y, w=ssd_detection.w,
-                                        species_class=species_class, cover_class=cover_class_id
-                                    )
+                        # keep no fish also here, so classificator learns to fix detector mistakes
+                        ssd_detection = load_ssd_detection(video_id, frame)
+                        species_class = guess_species(known_species[video_id], frame)
+                        if ssd_detection is not None and species_class is not None:
+                            data.append(
+                                FishClassification(
+                                    video_id=video_id,
+                                    frame=frame,
+                                    x=ssd_detection.x, y=ssd_detection.y, w=ssd_detection.w,
+                                    species_class=species_class, cover_class=cover_class_id
                                 )
+                            )
 
         print('data size:', len(data))
         pickle.dump(used_frames, open('../output/used_frames.pkl', 'wb'))
         return data, known_species
 
-    def generate_xy(self, cfg: SampleCfg):
+    def generate_x(self, cfg: SampleCfg):
         img = scipy.misc.imread(dataset.image_crop_fn(cfg.fish_classification.video_id, cfg.fish_classification.frame))
 
         crop = utils.get_image_crop(full_rgb=img, rect=cfg.rect,
@@ -323,8 +337,10 @@ class ClassificationDataset(fish_detection.FishDetectionDataset):
 
         if cfg.vflip:
             crop = img_augmentation.vertical_flip(crop)
+        return crop * 255.0
 
-        return crop * 255.0, cfg.fish_classification.species_class, cfg.fish_classification.cover_class
+    def generate_xy(self, cfg: SampleCfg):
+        return self.generate_x(cfg), cfg.fish_classification.species_class, cfg.fish_classification.cover_class
 
     def generate(self, batch_size, skip_pp=False, verbose=False):
         pool = ThreadPool(processes=8)
@@ -341,9 +357,10 @@ class ClassificationDataset(fish_detection.FishDetectionDataset):
                             saturation=rand_or_05(),
                             contrast=rand_or_05(),
                             brightness=rand_or_05(),
-                            shift_x_ratio=random.uniform(-0.1, 0.1),
-                            shift_y_ratio=random.uniform(-0.1, 0.1),
-                            angle=random.uniform(-15.0, 15.0),
+                            color_shift=rand_or_05(),
+                            shift_x_ratio=random.uniform(-0.2, 0.2),
+                            shift_y_ratio=random.uniform(-0.2, 0.2),
+                            angle=random.uniform(-20.0, 20.0),
                             hflip=random.choice([True, False]),
                             vflip=random.choice([True, False])
                             )
@@ -368,34 +385,8 @@ class ClassificationDataset(fish_detection.FishDetectionDataset):
         pool = ThreadPool(processes=8)
         samples_to_process = []  # type: [SampleCfg]
 
-        # X_batches = []
-        # y_batches = []
-        #
-        # for i, sample in enumerate(self.test_data[:len(self.test_data) // batch_size * batch_size]):
-        #     cfg = SampleCfg(fish_classification=sample)
-        #     if verbose:
-        #         print(cfg)
-        #     samples_to_process.append(cfg)
-        #     if i % 1000 == 0:
-        #         print(i)
-        #
-        #     if len(samples_to_process) == batch_size:
-        #         batch_samples = pool.map(self.generate_xy, samples_to_process)
-        #         X_batch = np.array([batch_sample[0] for batch_sample in batch_samples])
-        #         y_batch_species = np.array([batch_sample[1] for batch_sample in batch_samples])
-        #         y_batch_cover = np.array([batch_sample[2] for batch_sample in batch_samples])
-        #         if not skip_pp:
-        #             X_batch = self.preprocess_input(X_batch)
-        #             y_batch_species = to_categorical(y_batch_species, num_classes=len(SPECIES_CLASSES))
-        #             y_batch_cover = to_categorical(y_batch_cover, num_classes=len(COVER_CLASSES))
-        #         samples_to_process = []
-        #         X_batches.append(X_batch)
-        #         y_batches.append({'cat_species': y_batch_species, 'cat_cover': y_batch_cover})
-
         while True:
-            # for X_batch, y_batch in zip(X_batches, y_batches):
-            #     yield X_batch, y_batch
-            for sample in self.test_data[:int(len(self.test_data) / 4 // batch_size) * batch_size]:
+            for sample in self.test_data[:int(len(self.test_data) // batch_size) * batch_size]:
                 cfg = SampleCfg(fish_classification=sample)
                 if verbose:
                     print(cfg)
@@ -403,7 +394,6 @@ class ClassificationDataset(fish_detection.FishDetectionDataset):
 
                 if len(samples_to_process) == batch_size:
                     batch_samples = pool.map(self.generate_xy, samples_to_process)
-                    # batch_samples = map(self.generate_xy, samples_to_process)
                     X_batch = np.array([batch_sample[0] for batch_sample in batch_samples])
                     y_batch_species = np.array([batch_sample[1] for batch_sample in batch_samples])
                     y_batch_cover = np.array([batch_sample[2] for batch_sample in batch_samples])
@@ -413,6 +403,16 @@ class ClassificationDataset(fish_detection.FishDetectionDataset):
                         y_batch_cover = to_categorical(y_batch_cover, num_classes=len(COVER_CLASSES))
                     samples_to_process = []
                     yield X_batch, {'cat_species': y_batch_species, 'cat_cover': y_batch_cover}
+
+    def generate_full_test_for_clip(self, batch_size, pool, video_id, skip_pp=False):
+        all_configs = [SampleCfg(fish_classification=sample) for sample in self.test_data_for_clip[video_id]]
+        all_configs = sorted(all_configs, key=lambda x: x.frame)
+        for samples_to_process in utils.chunks(all_configs, batch_size):
+            batch_samples = pool.map(self.generate_xy, samples_to_process)
+            X_batch = np.array([batch_sample[0] for batch_sample in batch_samples])
+            if not skip_pp:
+                X_batch = self.preprocess_input(X_batch)
+            yield X_batch
 
 
 def guess_species(known_species, frame_id):
@@ -455,12 +455,12 @@ def check_dataset_generator():
         print(y_batch)
         for i in range(batch_size):
             print(np.min(x_batch[i]), np.max(x_batch[i]))
-            plt.imshow(x_batch[i]/256.0)
+            plt.imshow(x_batch[i] / 256.0)
             # print(SPECIES_CLASSES[y_batch['cat_species'][i]], COVER_CLASSES[y_batch['cat_cover'][i]])
             plt.show()
 
 
-def train(fold, continue_from_epoch=-1, weights='', batch_size=8):
+def train(fold, continue_from_epoch=0, weights='', batch_size=8):
     dataset = ClassificationDataset(fold=fold)
 
     model = build_model_densenet_161()
@@ -477,18 +477,18 @@ def train(fold, continue_from_epoch=-1, weights='', batch_size=8):
 
     def cheduler(epoch):
         if epoch < 1:
-            return 1e-3
-        if epoch < 5:
             return 5e-4
-        if epoch < 15:
+        if epoch < 5:
             return 2e-4
+        if epoch < 15:
+            return 1e-4
         if epoch < 30:
             return 5e-5
         return 2e-5
 
     validation_batch_size = 8
 
-    if continue_from_epoch == -1:
+    if continue_from_epoch == 0:
         utils.lock_layers_until(model, 'pool5')
         model.summary()
         model.fit_generator(dataset.generate(batch_size=batch_size),
@@ -498,7 +498,7 @@ def train(fold, continue_from_epoch=-1, weights='', batch_size=8):
                             callbacks=[],
                             validation_data=dataset.generate_test(batch_size=validation_batch_size),
                             validation_steps=dataset.test_batches(validation_batch_size),
-                            initial_epoch=continue_from_epoch + 1)
+                            initial_epoch=0)
         continue_from_epoch += 1
 
     checkpoint_periodical = ModelCheckpoint(checkpoints_dir + "/checkpoint-{epoch:03d}-{val_loss:.4f}.hdf5",
@@ -555,6 +555,169 @@ def check(fold, weights):
             plt.show()
 
 
+def generate_crops_from_detection_results(crops_dir,
+                                          detection_results_dir,
+                                          classification_crops_dir,
+                                          save_jpegs):
+    print('load ssd results:')
+    configs = []
+    video_ids = sorted(os.listdir(detection_results_dir))
+    for i, video_id in enumerate(video_ids):
+        if i % 10 == 0:
+            print('{} / {}, {:.2}%'.format(i, len(video_ids), 100.0*i/len(video_ids)))
+        video_clip_dir = os.path.join(detection_results_dir, video_id)
+        for detection_fn in sorted(os.listdir(video_clip_dir)):
+            if not detection_fn.endswith('.npy'):
+                continue
+            frame = int(detection_fn[:-len('.npy')]) - 1
+            ssd_detection = load_ssd_detection(video_id, frame, data_dir=detection_results_dir)
+
+            if ssd_detection is None:
+                continue
+
+            # reuse the same logic as used during training
+            configs.append(
+                SampleCfg(
+                    fish_classification=FishClassification(
+                        video_id=video_id,
+                        frame=frame,
+                        x=ssd_detection.x, y=ssd_detection.y, w=ssd_detection.w,
+                        species_class=ssd_detection.class_id, cover_class=CLASS_FISH_CLEAR_ID
+                    )
+                )
+            )
+
+    def process_sample(cfg: SampleCfg):
+        src_fn = os.path.join(crops_dir,
+                              cfg.fish_classification.video_id,
+                              '{:04}.jpg'.format(int(cfg.fish_classification.frame) + 1))
+        img = scipy.misc.imread(src_fn)
+        crop = utils.get_image_crop(full_rgb=img, rect=cfg.rect, out_size=INPUT_ROWS)
+        # utils.print_stats('crop', crop)
+
+        os.makedirs(os.path.join(classification_crops_dir,
+                                 cfg.fish_classification.video_id), exist_ok=True)
+        if save_jpegs:
+            dst_jpg_fn = os.path.join(classification_crops_dir,
+                                      cfg.fish_classification.video_id,
+                                      '{:04}.jpg'.format(int(cfg.fish_classification.frame) + 1))
+            scipy.misc.imsave(dst_jpg_fn, crop)
+
+        dst_fn = os.path.join(classification_crops_dir,
+                              cfg.fish_classification.video_id,
+                              '{:04}.npy'.format(int(cfg.fish_classification.frame) + 1))
+        crop *= 255.0
+        np.save(dst_fn, np.clip(crop, 0, 255).astype(np.uint8))
+
+    print('process samples')
+    # process_sample(configs[0])
+    pool = ThreadPool(processes=8)
+    pool.map(process_sample, configs)
+
+
+def save_detection_results(detection_results_dir, output_dir):
+    print('load ssd results:')
+    video_ids = sorted(os.listdir(detection_results_dir))
+    os.makedirs(output_dir, exist_ok=True)
+    for i, video_id in enumerate(video_ids):
+        if i % 10 == 0:
+            print('{} / {}, {:.2}%'.format(i, len(video_ids), 100.0*i/len(video_ids)))
+        configs = []
+        video_clip_dir = os.path.join(detection_results_dir, video_id)
+        for detection_fn in sorted(os.listdir(video_clip_dir)):
+            if not detection_fn.endswith('.npy'):
+                continue
+            frame = int(detection_fn[:-len('.npy')]) - 1
+            ssd_detection = load_ssd_detection(video_id, frame, data_dir=detection_results_dir)
+
+            if ssd_detection is None:
+                continue
+
+            # reuse the same logic as used during training
+            configs.append(
+                SampleCfg(
+                    fish_classification=FishClassification(
+                        video_id=video_id,
+                        frame=frame,
+                        x=ssd_detection.x, y=ssd_detection.y, w=ssd_detection.w,
+                        species_class=ssd_detection.class_id, cover_class=CLASS_FISH_CLEAR_ID
+                    ),
+                    ssd_detection=ssd_detection
+                )
+            )
+        df = pd.DataFrame({'frame': [cfg.fish_classification.frame for cfg in configs]})
+        df['video_id'] = video_id
+        df['x'] = [cfg.fish_classification.x for cfg in configs]
+        df['y'] = [cfg.fish_classification.y for cfg in configs]
+        df['w'] = [cfg.fish_classification.w for cfg in configs]
+        df['h'] = [cfg.ssd_detection.h for cfg in configs]
+        df['detection_conf'] = [cfg.ssd_detection.confidence for cfg in configs]
+        df['detection_species'] = [cfg.ssd_detection.class_id for cfg in configs]
+        df.to_csv(os.path.join(output_dir, video_id+'_ssd_detection.csv'), index=False, float_format='%.8f')
+
+
+def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, output_dir):
+    model = build_model_densenet_161()
+    model.load_weights(weights)
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=16)
+
+    video_ids = sorted(dataset.fold_test_video_ids(fold))
+
+    batch_size = 8
+    for video_id in video_ids:
+        src_dir = os.path.join(crops_dir, video_id)
+        files = [f for f in sorted(os.listdir(src_dir)) if f.endswith('.jpg')]
+
+        def load_data():
+            for batch_files in utils.chunks(files, batch_size):
+                res = []
+                for fn in batch_files:
+                    # print('load', fn)
+                    img = scipy.misc.imread(os.path.join(src_dir, fn))
+                    # utils.print_stats('img', img)
+                    # img = np.load(os.path.join(src_dir, fn))
+                    # plt.imshow(img)
+                    # plt.show()
+                    img = img.astype(np.float32)   # * 255.0
+                    res.append(img)
+                res = np.array(res)
+                yield preprocess_input(res)
+
+        results_species = []
+        results_cover = []
+        for batch_data in utils.parallel_generator(load_data(), executor):
+        # for batch_data in load_data():
+            res_species, res_cover = model.predict_on_batch(batch_data)
+            #
+            # for i in range(batch_data.shape[0]):
+            #     print(SPECIES_CLASSES[np.argmax(res_species[i])],
+            #           COVER_CLASSES[np.argmax(res_cover[i])])
+            #     print(res_species[i])
+            #     print(res_cover[i])
+
+            results_species.append(res_species)
+            results_cover.append(res_cover)
+
+        frames = [int(f[:-len('.npy')])-1 for f in files]
+        df = pd.DataFrame({'frame': frames})
+        df['video_id'] = video_id
+
+        results_species = np.row_stack(results_species)
+        results_cover = np.row_stack(results_cover)
+
+        for i, species_cls in enumerate(SPECIES_CLASSES):
+            df['species_'+species_cls] = results_species[:, i]
+
+        for i, cover_cls in enumerate(COVER_CLASSES):
+            df[cover_cls] = results_cover[:, i]
+
+        df.to_csv(os.path.join(output_dir, video_id+'_categories.csv'), index=False, float_format='%.4f')
+        # break
+
+
 if __name__ == '__main__':
     action = sys.argv[1]
     # action = 'check_dataset_generator'
@@ -567,3 +730,17 @@ if __name__ == '__main__':
         check_dataset_generator()
     if action == 'check':
         check(fold=int(sys.argv[2]), weights=sys.argv[3])
+    if action == 'generate_train_classification_crops':
+        generate_crops_from_detection_results(crops_dir=dataset.RULER_CROPS_DIR,
+                                              detection_results_dir='../output/predictions_ssd_roi2/vgg_41',
+                                              classification_crops_dir='../output/classification_crop',
+                                              save_jpegs=True)
+    if action == 'generate_results_from_detection_crops_on_fold':
+        generate_results_from_detection_crops_on_fold(fold=int(sys.argv[2]),
+                                                      weights=sys.argv[3],
+                                                      crops_dir='../output/classification_crop',
+                                                      output_dir='../output/classification_results')
+
+    if action == 'save_detection_results':
+        save_detection_results(detection_results_dir='../output/predictions_ssd_roi2/vgg_41',
+                               output_dir='../output/detection_results')

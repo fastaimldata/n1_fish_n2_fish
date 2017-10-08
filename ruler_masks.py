@@ -330,11 +330,11 @@ def rotate(img, angle, dest_shape):
     return skimage.transform.warp(img, tform, mode='constant', cval=0, order=1, output_shape=(h, w)), tform
 
 
-def find_ruler_rect(clip_name):
-    print(clip_name)
+def find_ruler_rect(video_id):
+    print(video_id)
     masks_dir = '../output/ruler_masks'
     masks = []
-    clip_dir = os.path.join(masks_dir, clip_name)
+    clip_dir = os.path.join(masks_dir, video_id)
     for frame_name in os.listdir(clip_dir):
         if not frame_name.endswith('.png'):
             continue
@@ -348,7 +348,7 @@ def find_ruler_rect(clip_name):
     avg_mask = scipy.misc.imresize(avg_mask, 0.5, interp='bilinear', mode='L')
 
     os.makedirs(AVG_MASKS_DIR, exist_ok=True)
-    np.save(os.path.join(AVG_MASKS_DIR, clip_name + '.npy'), avg_mask)
+    np.save(os.path.join(AVG_MASKS_DIR, video_id + '.npy'), avg_mask)
 
     # area to paint mask on
     w = 400
@@ -369,18 +369,18 @@ def find_ruler_rect(clip_name):
 
 
 def find_ruler_angles():
-    clip_names = os.listdir(MASKS_DIR)
+    video_ids = os.listdir(MASKS_DIR)
 
     pool = ThreadPool(processes=8)
-    angles = pool.map(find_ruler_rect, clip_names)
+    angles = pool.map(find_ruler_rect, video_ids)
 
-    df = pd.DataFrame(data={'clip_name': clip_names, 'ruler_angle': angles})
+    df = pd.DataFrame(data={'video_id': video_ids, 'ruler_angle': angles})
     df.to_csv('../output/ruler_angles.csv', index=False)
 
 
 def find_ruler_points():
-    def find_one_ruler_points(clip_name, angle):
-        mask = np.load(os.path.join(AVG_MASKS_DIR, clip_name + '.npy'))
+    def find_one_ruler_points(video_id, angle):
+        mask = np.load(os.path.join(AVG_MASKS_DIR, video_id + '.npy'))
         h = 400
         w = 400
         rotated, tform = rotate(mask, angle, dest_shape=(h, w))
@@ -409,9 +409,9 @@ def find_ruler_points():
     angles = pd.read_csv('../output/ruler_angles.csv')
     points = []
     for _, row in angles.iterrows():
-        clip_name, angle = row
-        print(clip_name, angle)
-        points.append(find_one_ruler_points(clip_name, angle))
+        video_id, angle = row
+        print(video_id, angle)
+        points.append(find_one_ruler_points(video_id, angle))
     points = np.array(points)
     print(points.shape)
     angles['ruler_x0'] = points[:, 0, 0]
@@ -424,8 +424,8 @@ def find_ruler_points():
 def check_ruler_points():
     points = pd.read_csv('../output/ruler_points.csv')
     for _, row in points.iterrows():
-        clip_name = row.clip_name
-        img = scipy.misc.imread(os.path.join(IMAGES_DIR, clip_name, "0001.jpg"))
+        video_id = row.video_id
+        img = scipy.misc.imread(os.path.join(IMAGES_DIR, video_id, "0001.jpg"))
 
         dst_w = 720
         dst_h = 360

@@ -182,7 +182,7 @@ class SSDDataset(fish_detection.FishDetectionDataset):
         return img, y
 
     def generate_xy(self, cfg: SampleCfg):
-        img = scipy.misc.imread(dataset.image_fn(cfg.detection.clip_name, cfg.detection.frame))
+        img = scipy.misc.imread(dataset.image_fn(cfg.detection.video_id, cfg.detection.frame))
         crop = skimage.transform.warp(img, cfg.transformation, mode='edge', order=3, output_shape=(INPUT_ROWS, INPUT_COLS))
 
         detection = cfg.detection
@@ -206,7 +206,7 @@ class SSDDataset(fish_detection.FishDetectionDataset):
 
         crop = crop.astype('float32')
         if cfg.saturation != 0.5:
-            crop = img_augmentation.saturation(crop, variance=0.2, r=cfg.saturation)
+            crop = img_augmentation.saturation(crop, variance=0.25, r=cfg.saturation)
 
         if cfg.contrast != 0.5:
             crop = img_augmentation.contrast(crop, variance=0.25, r=cfg.contrast)
@@ -223,7 +223,7 @@ class SSDDataset(fish_detection.FishDetectionDataset):
         return crop*255.0, targets
 
     def generate_x_from_precomputed_crop(self, cfg: SampleCfg):
-        crop = scipy.misc.imread(dataset.image_crop_fn(cfg.detection.clip_name, cfg.detection.frame))
+        crop = scipy.misc.imread(dataset.image_crop_fn(cfg.detection.video_id, cfg.detection.frame))
         crop = crop.astype('float32')
         # print('crop max val:', np.max(crop))
         return crop
@@ -238,9 +238,9 @@ class SSDDataset(fish_detection.FishDetectionDataset):
 
         detections = []  # type: List[fish_detection.FishDetection]
         if is_training:
-            detections += sum([self.detections[clip_name] for clip_name in self.train_clips], [])
+            detections += sum([self.detections[video_id] for video_id in self.train_clips], [])
         else:
-            detections += sum([self.detections[clip_name] for clip_name in self.test_clips], [])
+            detections += sum([self.detections[video_id] for video_id in self.test_clips], [])
 
         while True:
             points_random_shift = 0
@@ -250,7 +250,7 @@ class SSDDataset(fish_detection.FishDetectionDataset):
                 points_random_shift = 32
 
             for detection in detections:
-                tform = self.transform_for_clip(detection.clip_name,
+                tform = self.transform_for_clip(detection.video_id,
                                                 dst_w=INPUT_COLS, dst_h=INPUT_ROWS,
                                                 points_random_shift=points_random_shift)
                 cfg = SampleCfg(detection=detection, transformation=tform)
@@ -292,7 +292,7 @@ class SSDDataset(fish_detection.FishDetectionDataset):
         for frame_id in frames_to_use:
             detections.append(
                 fish_detection.FishDetection(
-                    clip_name=video_id,
+                    video_id=video_id,
                     frame=frame_id,
                     fish_number=0,
                     x1=np.nan, y1=np.nan,
@@ -326,7 +326,6 @@ class SSDDataset(fish_detection.FishDetectionDataset):
             yield output_samples(samples_to_process)
 
 
-
 def check_dataset():
     model = build_model(input_shape)
     model.compile(loss=MultiboxLoss(NUM_CLASSES, neg_pos_ratio=3.0, pos_cost_multiplier=1.2).compute_loss,
@@ -357,17 +356,17 @@ def check_dataset():
 
 
 def train():
-    model_name = 'ssd_720'
+    model_name = 'ssd_720_2'
     checkpoints_dir = '../output/checkpoints/detect_ssd/' + model_name
     tensorboard_dir = '../output/logs/detect_ssd/' + model_name
     os.makedirs(checkpoints_dir, exist_ok=True)
     os.makedirs(tensorboard_dir, exist_ok=True)
 
     model = build_model(input_shape)
-    model.load_weights('../output/checkpoints/detect_ssd/ssd_720/checkpoint-best-041-0.0642.hdf5')
+    # model.load_weights('../output/checkpoints/detect_ssd/ssd_720/checkpoint-best-041-0.0642.hdf5')
 
-    model.compile(loss=MultiboxLoss(NUM_CLASSES, neg_pos_ratio=2.0, pos_cost_multiplier=1.0).compute_loss,
-                  optimizer=Adam(lr=5e-5))
+    model.compile(loss=MultiboxLoss(NUM_CLASSES, neg_pos_ratio=3.0, pos_cost_multiplier=2.0).compute_loss,
+                  optimizer=Adam(lr=1e-4))
     model.summary()
 
     priors = priors_from_model(model)
@@ -378,7 +377,7 @@ def train():
     batch_size = 8
     val_batch_size = 8
 
-    nb_epoch = 1000
+    nb_epoch = 100
 
     checkpoint_best = ModelCheckpoint(checkpoints_dir + "/checkpoint-best-{epoch:03d}-{val_loss:.4f}.hdf5",
                                       verbose=1,
@@ -387,7 +386,7 @@ def train():
     checkpoint_periodical = ModelCheckpoint(checkpoints_dir + "/checkpoint-{epoch:03d}-{val_loss:.4f}.hdf5",
                                             verbose=1,
                                             save_weights_only=False,
-                                            period=8)
+                                            period=4)
 
     tensorboard = TensorBoard(tensorboard_dir, histogram_freq=4, write_graph=True, write_images=True)
 
@@ -398,7 +397,7 @@ def train():
                         callbacks=[checkpoint_best, checkpoint_periodical, tensorboard],
                         validation_data=dataset.generate_ssd(batch_size=val_batch_size, is_training=False),
                         validation_steps=dataset.nb_test_samples // val_batch_size,
-                        initial_epoch=43)
+                        initial_epoch=0)
 
 
 def train_resnet():
@@ -541,7 +540,7 @@ def generate_predictions_on_train_clips(weights, suffix, from_idx, count, use_re
 
     for video_id in items[from_idx: from_idx+count]:
         print(video_id)
-        outdir = '../output/predictions_ssd_roi2/{}/{}'.format(suffix, video_id)
+        outdir = '../output/predictions_ssd_roi3/{}/{}'.format(suffix, video_id)
         os.makedirs(outdir, exist_ok=True)
         batch_size = 4
 
