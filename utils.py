@@ -3,6 +3,8 @@ import pickle
 import time
 import random
 from contextlib import contextmanager
+import concurrent.futures
+from queue import Queue
 
 import skimage.io
 import skimage.transform
@@ -251,9 +253,58 @@ class ImageCache:
             return random.choice(self.loaded_items)
 
 
+def parallel_generator(orig_gen, executor):
+    queue = Queue(maxsize=8)
+
+    def bg_task():
+        for i in orig_gen:
+            # print('bg_task', i)
+            queue.put(i)
+        # print('bg_task', None)
+        queue.put(None)
+
+    task = executor.submit(bg_task)
+    while True:
+        value = queue.get()
+        if value is not None:
+            yield value
+            queue.task_done()
+        else:
+            queue.task_done()
+            break
+    task.result()
+
+
+def test_parallel_generator():
+    def task(i):
+        time.sleep(0.1)
+        print('task', i)
+        return i
+
+    def orig_gen(n):
+        for i in range(n):
+            yield task(i)
+
+    res_orig = []
+    with timeit_context('orig gen'):
+        for i in orig_gen(5):
+            time.sleep(0.1)
+            res_orig.append(i)
+
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    res_par = []
+    with timeit_context('parallel gen'):
+        for i in parallel_generator(orig_gen(5), executor):
+            time.sleep(0.1)
+            res_par.append(i)
+
+    assert res_orig == res_par
+
+
 if __name__ == '__main__':
     pass
-    #test_chunks()
+    test_parallel_generator()
+    # test_chunks()
     #
     # img = skimage.io.imread('../train/ALB/img_00003.jpg')
     # print(img.shape)
