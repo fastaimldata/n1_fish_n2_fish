@@ -4,6 +4,7 @@ import skimage.transform
 import sys
 from keras.callbacks import ModelCheckpoint
 from keras.callbacks import TensorBoard
+import concurrent.futures
 
 from ssd.ssd_utils import BBoxUtility
 from ssd.ssd_training import MultiboxLoss
@@ -145,6 +146,7 @@ class SampleCfg:
                  detection,
                  transformation,
                  saturation=0.5, contrast=0.5, brightness=0.5,  # 0.5  - no changes, range 0..1
+                 blurred_by_downscaling=1,
                  hflip=False,
                  vflip=False):
         self.transformation = transformation
@@ -154,7 +156,7 @@ class SampleCfg:
         self.brightness = brightness
         self.contrast = contrast
         self.saturation = saturation
-        self.blurred_by_downscaling = None
+        self.blurred_by_downscaling = blurred_by_downscaling
 
     def __lt__(self, other):
         return True
@@ -164,8 +166,8 @@ class SampleCfg:
 
 
 class SSDDataset(fish_detection.FishDetectionDataset):
-    def __init__(self, bbox_util, preprocess_input=preprocess_input):
-        super().__init__()
+    def __init__(self, bbox_util, preprocess_input=preprocess_input, is_test=False):
+        super().__init__(is_test)
         self.bbox_util = bbox_util
         self.preprocess_input = preprocess_input
 
@@ -182,7 +184,7 @@ class SSDDataset(fish_detection.FishDetectionDataset):
         return img, y
 
     def generate_xy(self, cfg: SampleCfg):
-        img = scipy.misc.imread(dataset.image_fn(cfg.detection.video_id, cfg.detection.frame))
+        img = scipy.misc.imread(dataset.image_fn(cfg.detection.video_id, cfg.detection.frame, is_test=self.is_test))
         crop = skimage.transform.warp(img, cfg.transformation, mode='edge', order=3, output_shape=(INPUT_ROWS, INPUT_COLS))
 
         detection = cfg.detection
@@ -220,10 +222,12 @@ class SSDDataset(fish_detection.FishDetectionDataset):
         if cfg.vflip:
             crop, targets = self.vertical_flip(crop, targets)
 
+        crop = img_augmentation.blurred_by_downscaling(crop, 1.0/cfg.blurred_by_downscaling)
+
         return crop*255.0, targets
 
     def generate_x_from_precomputed_crop(self, cfg: SampleCfg):
-        crop = scipy.misc.imread(dataset.image_crop_fn(cfg.detection.video_id, cfg.detection.frame))
+        crop = scipy.misc.imread(dataset.image_crop_fn(cfg.detection.video_id, cfg.detection.frame, is_test=self.is_test))
         crop = crop.astype('float32')
         # print('crop max val:', np.max(crop))
         return crop
@@ -261,6 +265,7 @@ class SSDDataset(fish_detection.FishDetectionDataset):
                     cfg.saturation = rand_or_05()
                     cfg.hflip = random.choice([True, False])
                     cfg.vflip = random.choice([True, False])
+                    cfg.blurred_by_downscaling = np.random.choice([1, 1, 1, 1, 2, 2.5, 3, 4])
 
                 if verbose:
                     print(str(cfg))
@@ -288,7 +293,7 @@ class SSDDataset(fish_detection.FishDetectionDataset):
 
     def generate_x_for_train_video_id(self, video_id, batch_size, pool, frames=None):
         detections = []  # type: List[fish_detection.FishDetection]
-        frames_to_use = frames if frames is not None else range(len(dataset.video_clips()[video_id]))
+        frames_to_use = frames if frames is not None else range(len(dataset.video_clips(is_test=self.is_test)[video_id]))
         for frame_id in frames_to_use:
             detections.append(
                 fish_detection.FishDetection(
@@ -363,10 +368,10 @@ def train():
     os.makedirs(tensorboard_dir, exist_ok=True)
 
     model = build_model(input_shape)
-    # model.load_weights('../output/checkpoints/detect_ssd/ssd_720/checkpoint-best-041-0.0642.hdf5')
+    model.load_weights('../output/checkpoints/detect_ssd/ssd_720_2/checkpoint-019-0.1299.hdf5')
 
-    model.compile(loss=MultiboxLoss(NUM_CLASSES, neg_pos_ratio=3.0, pos_cost_multiplier=2.0).compute_loss,
-                  optimizer=Adam(lr=1e-4))
+    model.compile(loss=MultiboxLoss(NUM_CLASSES, neg_pos_ratio=2.0, pos_cost_multiplier=1.0).compute_loss,
+                  optimizer=Adam(lr=4e-5))
     model.summary()
 
     priors = priors_from_model(model)
@@ -397,7 +402,7 @@ def train():
                         callbacks=[checkpoint_best, checkpoint_periodical, tensorboard],
                         validation_data=dataset.generate_ssd(batch_size=val_batch_size, is_training=False),
                         validation_steps=dataset.nb_test_samples // val_batch_size,
-                        initial_epoch=0)
+                        initial_epoch=20)
 
 
 def train_resnet():
@@ -409,10 +414,10 @@ def train_resnet():
 
     model = build_resnet(input_shape=input_shape)
     model.compile(loss=MultiboxLoss(NUM_CLASSES, neg_pos_ratio=2.0, pos_cost_multiplier=1.0).compute_loss,
-                  optimizer=Adam(lr=5e-5))
+                  optimizer=Adam(lr=3e-5))
     model.summary()
     # model.load_weights('../output/checkpoints/detect_ssd/ssd_resnet_720/checkpoint-best-018-0.2318.hdf5')
-    model.load_weights('../output/checkpoints/detect_ssd/ssd_resnet_720/checkpoint-best-029-0.1417.hdf5')
+    model.load_weights('../output/checkpoints/detect_ssd/ssd_resnet_720/checkpoint-best-053-0.1058.hdf5')
 
     priors = priors_from_model(model)
     bbox_util = BBoxUtility(NUM_CLASSES, priors)
@@ -442,7 +447,7 @@ def train_resnet():
                         callbacks=[checkpoint_best, checkpoint_periodical, tensorboard],
                         validation_data=dataset.generate_ssd(batch_size=val_batch_size, is_training=False),
                         validation_steps=dataset.nb_test_samples // val_batch_size,
-                        initial_epoch=30)
+                        initial_epoch=54)
 
 
 def check(weights):
@@ -481,7 +486,7 @@ def check(weights):
     # plt.show()
 
 
-def check_on_train_clip(video_id, weights, suffix):
+def check_on_train_clip(video_id, weights, suffix, is_test=False):
     if 'resnet' in weights:
         model = build_resnet(input_shape)
     else:
@@ -496,14 +501,14 @@ def check_on_train_clip(video_id, weights, suffix):
 
     priors = priors_from_model(model)
     bbox_util = BBoxUtility(NUM_CLASSES, priors)
-    dataset = SSDDataset(bbox_util=bbox_util)
+    dataset = SSDDataset(bbox_util=bbox_util, is_test=is_test)
 
     outdir = '../output/predictions_ssd/' + video_id + suffix
     os.makedirs(outdir, exist_ok=True)
     batch_size = 4
 
     frame_id = 0
-    for x_batch in dataset.generate_x_for_train_video_id(video_id=video_id, batch_size=batch_size, pool=pool):
+    for x_batch, frames in dataset.generate_x_for_train_video_id(video_id=video_id, batch_size=batch_size, pool=pool):
         predictions = model.predict(x_batch)
         results = bbox_util.detection_out(predictions)
         for batch_id in range(predictions.shape[0]):
@@ -517,7 +522,7 @@ def check_on_train_clip(video_id, weights, suffix):
             print(frame_id)
 
 
-def generate_predictions_on_train_clips(weights, suffix, from_idx, count, use_requested_frames=False):
+def generate_predictions_on_train_clips(weights, suffix, from_idx, count, use_requested_frames=False, is_test=False):
     if 'resnet' in weights:
         model = build_resnet(input_shape)
     else:
@@ -530,17 +535,21 @@ def generate_predictions_on_train_clips(weights, suffix, from_idx, count, use_re
 
     priors = priors_from_model(model)
     bbox_util = BBoxUtility(NUM_CLASSES, priors)
-    dataset = SSDDataset(bbox_util=bbox_util)
+    dataset = SSDDataset(bbox_util=bbox_util, is_test=is_test)
 
     items = list(sorted(dataset.video_clips.keys()))
 
     requested_frames = pickle.load(open('../output/used_frames.pkl', 'rb'))
 
     pool = ThreadPool(processes=4)
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
     for video_id in items[from_idx: from_idx+count]:
         print(video_id)
-        outdir = '../output/predictions_ssd_roi3/{}/{}'.format(suffix, video_id)
+        if is_test:
+            outdir = '../output/predictions_ssd_roi2_test/{}/{}'.format(suffix, video_id)
+        else:
+            outdir = '../output/predictions_ssd_roi2/{}/{}'.format(suffix, video_id)
         os.makedirs(outdir, exist_ok=True)
         batch_size = 4
 
@@ -557,10 +566,10 @@ def generate_predictions_on_train_clips(weights, suffix, from_idx, count, use_re
         if len(new_frames) == 0:
             continue
 
-        for x_batch, used_frames in dataset.generate_x_for_train_video_id(video_id=video_id,
+        for x_batch, used_frames in utils.parallel_generator(dataset.generate_x_for_train_video_id(video_id=video_id,
                                                                           batch_size=batch_size,
                                                                           frames=new_frames,
-                                                                          pool=pool):
+                                                                          pool=pool), executor=executor):
             predictions = model.predict(x_batch)
             results = bbox_util.detection_out(predictions)
             for batch_id in range(predictions.shape[0]):
@@ -579,8 +588,12 @@ if __name__ == '__main__':
         check(weights=sys.argv[2])
     elif action == 'check_on_train_clip':
         check_on_train_clip(video_id=sys.argv[2], weights=sys.argv[3], suffix=sys.argv[4])
+    elif action == 'check_on_test_clip':
+        check_on_train_clip(video_id=sys.argv[2], weights=sys.argv[3], suffix=sys.argv[4], is_test=True)
     elif action == 'generate_predictions_on_train_clips':
         generate_predictions_on_train_clips(weights=sys.argv[2], suffix=sys.argv[3], from_idx=int(sys.argv[4]), count=int(sys.argv[5]))
+    elif action == 'generate_predictions_on_test_clips':
+        generate_predictions_on_train_clips(weights=sys.argv[2], suffix=sys.argv[3], from_idx=int(sys.argv[4]), count=int(sys.argv[5]), is_test=True)
     elif action == 'check_dataset':
         check_dataset()
 

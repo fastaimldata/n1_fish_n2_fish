@@ -23,10 +23,17 @@ RulerPoints = namedtuple('RulerPoints', ['x1', 'y1', 'x2', 'y2'])
 
 
 class FishDetectionDataset:
-    def __init__(self):
-        self.video_clips = dataset.video_clips()
+    def __init__(self, is_test=False):
+        self.is_test = is_test
 
-        cache_fn = '../output/fish_detection.pkl'
+        if is_test:
+            self.video_clips = dataset.video_clips_test()
+            self.fn_suffix = '_test'
+        else:
+            self.video_clips = dataset.video_clips()
+            self.fn_suffix = ''
+
+        cache_fn = '../output/fish_detection{}.pkl'.format(self.fn_suffix)
         try:
             # raise FileNotFoundError
             self.detections = pickle.load(open(cache_fn, 'rb'))  # type: Dict[FishDetection]
@@ -42,9 +49,9 @@ class FishDetectionDataset:
         self.nb_test_samples = sum([len(self.detections[clip]) for clip in self.test_clips])
 
         self.ruler_points = {}
-        ruler_points = pd.read_csv('../output/ruler_points.csv')
+        ruler_points = pd.read_csv('../output/ruler_points{}.csv'.format(self.fn_suffix))
         for _, row in ruler_points.iterrows():
-            self.ruler_points[row.clip_name] = RulerPoints(x1=row.ruler_x0, y1=row.ruler_y0, x2=row.ruler_x1, y2=row.ruler_y1)
+            self.ruler_points[row.video_id] = RulerPoints(x1=row.ruler_x0, y1=row.ruler_y0, x2=row.ruler_x1, y2=row.ruler_y1)
 
     def load(self):
         detections = {}

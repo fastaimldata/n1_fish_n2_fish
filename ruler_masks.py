@@ -24,6 +24,7 @@ from skimage.transform import SimilarityTransform, AffineTransform
 import utils
 import dataset
 from dataset import IMAGES_DIR, MASKS_DIR, AVG_MASKS_DIR
+from dataset import IMAGES_DIR_TEST, MASKS_DIR_TEST, AVG_MASKS_DIR_TEST
 import fish_detection
 
 NUM_CLASSES = 1
@@ -320,6 +321,51 @@ def predict_masks(fold):
             scipy.misc.imsave(os.path.join(dest_dir, dir_name, fn), (predictions[i, :, :, 0]*255.0).astype(np.uint8))
 
 
+def predict_masks_test():
+    weights = '../output/checkpoints/mask_unet/model_unet1/checkpoint-best-019-0.0089.hdf5'
+    model = model_unet(INPUT_SHAPE)
+    model.load_weights(weights)
+    batch_size = 16
+
+    input_samples = []
+    processed_samples = 0
+
+    dest_dir = '../output/ruler_masks_test'
+
+    for dir_name in os.listdir(IMAGES_DIR_TEST):
+        clip_dir = os.path.join(IMAGES_DIR_TEST, dir_name)
+        os.makedirs(os.path.join(dest_dir, dir_name), exist_ok=True)
+
+        for frame_name in os.listdir(clip_dir):
+            if not frame_name.endswith('.jpg'):
+                continue
+            input_samples.append((dir_name, frame_name))
+
+    pool = ThreadPool(processes=8)
+    save_batch_size = 64
+    for batch_input_samples in utils.chunks(input_samples, batch_size*save_batch_size):
+        def process_sample(sample):
+            img_data = scipy.misc.imread(os.path.join(IMAGES_DIR_TEST, sample[0], sample[1]))
+            img_data = scipy.misc.imresize(img_data, 0.5, interp='cubic')
+            return preprocess_input(img_data)
+
+        def generate_x():
+            while True:
+                for samples in utils.chunks(batch_input_samples, batch_size):
+                    yield np.array(pool.map(process_sample, samples))
+
+        with utils.timeit_context('predict {} images, {}/{}, {:.1}%'.format(
+                                  batch_size*save_batch_size, processed_samples, len(input_samples),
+                                  100.0*processed_samples/len(input_samples))):
+            predictions = model.predict_generator(generate_x(), steps=save_batch_size, verbose=1)
+
+        for i in range(predictions.shape[0]):
+            dir_name, fn = input_samples[processed_samples]
+            processed_samples += 1
+            fn = fn.replace('jpg', 'png')
+            scipy.misc.imsave(os.path.join(dest_dir, dir_name, fn), (predictions[i, :, :, 0]*255.0).astype(np.uint8))
+
+
 def rotate(img, angle, dest_shape):
     h, w = dest_shape
     src_h, src_w = img.shape[:2]
@@ -330,9 +376,9 @@ def rotate(img, angle, dest_shape):
     return skimage.transform.warp(img, tform, mode='constant', cval=0, order=1, output_shape=(h, w)), tform
 
 
-def find_ruler_rect(video_id):
+def find_ruler_rect(video_id, masks_dir='../output/ruler_masks', output_dir=AVG_MASKS_DIR):
     print(video_id)
-    masks_dir = '../output/ruler_masks'
+    # masks_dir = '../output/ruler_masks'
     masks = []
     clip_dir = os.path.join(masks_dir, video_id)
     for frame_name in os.listdir(clip_dir):
@@ -347,8 +393,8 @@ def find_ruler_rect(video_id):
     # downscale to 180x320
     avg_mask = scipy.misc.imresize(avg_mask, 0.5, interp='bilinear', mode='L')
 
-    os.makedirs(AVG_MASKS_DIR, exist_ok=True)
-    np.save(os.path.join(AVG_MASKS_DIR, video_id + '.npy'), avg_mask)
+    os.makedirs(output_dir, exist_ok=True)
+    np.save(os.path.join(output_dir, video_id + '.npy'), avg_mask)
 
     # area to paint mask on
     w = 400
@@ -356,7 +402,7 @@ def find_ruler_rect(video_id):
     angles = np.linspace(-90.0, 90.0, 180)
     ranges = []
     for angle in angles:
-        rotated, tform = rotate(avg_mask, angle, shape=(w, w))
+        rotated, tform = rotate(avg_mask, angle, dest_shape=(w, w))
 
         col = np.cumsum(np.mean(rotated, axis=1))
         col /= col[-1]
@@ -378,9 +424,19 @@ def find_ruler_angles():
     df.to_csv('../output/ruler_angles.csv', index=False)
 
 
-def find_ruler_points():
+def find_ruler_angles_test():
+    video_ids = os.listdir(MASKS_DIR_TEST)
+
+    pool = ThreadPool(processes=8)
+    angles = pool.map(lambda video_id: find_ruler_rect(video_id, masks_dir='../output/ruler_masks_test', output_dir=AVG_MASKS_DIR_TEST), video_ids)
+
+    df = pd.DataFrame(data={'video_id': video_ids, 'ruler_angle': angles})
+    df.to_csv('../output/ruler_angles_test.csv', index=False)
+
+
+def find_ruler_points(avg_masks_dir=AVG_MASKS_DIR, res_suffix=''):
     def find_one_ruler_points(video_id, angle):
-        mask = np.load(os.path.join(AVG_MASKS_DIR, video_id + '.npy'))
+        mask = np.load(os.path.join(avg_masks_dir, video_id + '.npy'))
         h = 400
         w = 400
         rotated, tform = rotate(mask, angle, dest_shape=(h, w))
@@ -406,19 +462,18 @@ def find_ruler_points():
         return img_src_points
 
     # clips = video_clips()
-    angles = pd.read_csv('../output/ruler_angles.csv')
+    angles = pd.read_csv('../output/ruler_angles{}.csv'.format(res_suffix))
     points = []
     for _, row in angles.iterrows():
-        video_id, angle = row
-        print(video_id, angle)
-        points.append(find_one_ruler_points(video_id, angle))
+        print(row.video_id, row.ruler_angle)
+        points.append(find_one_ruler_points(row.video_id, row.ruler_angle))
     points = np.array(points)
     print(points.shape)
     angles['ruler_x0'] = points[:, 0, 0]
     angles['ruler_y0'] = points[:, 0, 1]
     angles['ruler_x1'] = points[:, 1, 0]
     angles['ruler_y1'] = points[:, 1, 1]
-    angles.to_csv('../output/ruler_points.csv', index=False)
+    angles.to_csv('../output/ruler_points{}.csv'.format(res_suffix), index=False)
 
 
 def check_ruler_points():
@@ -475,6 +530,30 @@ def generate_crops():
     pool.map(decode_clip, detection_dataset.video_clips.keys())
 
 
+def generate_crops_test():
+    detection_dataset = fish_detection.FishDetectionDataset(is_test=True)
+
+    def decode_clip(video_id):
+        frames = detection_dataset.video_clips[video_id]
+        print(video_id)
+        os.makedirs('{}/{}'.format(dataset.RULER_CROPS_DIR_TEST, video_id), exist_ok=True)
+        dest_w = 720
+        dest_h = 360
+        transform = detection_dataset.transform_for_clip(video_id, dest_w, dest_h)
+        for frame in frames:
+            src_fn = '{}/{}/{}.jpg'.format(IMAGES_DIR_TEST, video_id, frame)
+            dst_fn = '{}/{}/{}.jpg'.format(dataset.RULER_CROPS_DIR_TEST, video_id, frame)
+
+            if os.path.isfile(dst_fn):
+                continue
+            img = scipy.misc.imread(src_fn)
+            crop = skimage.transform.warp(img, transform, mode='edge', order=3, output_shape=(dest_h, dest_w))
+            scipy.misc.imsave(dst_fn, crop)
+
+    pool = ThreadPool(processes=8)
+    pool.map(decode_clip, detection_dataset.video_clips.keys())
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='ruler masks')
     parser.add_argument('action', type=str, default='check')
@@ -492,14 +571,22 @@ if __name__ == '__main__':
         check_unet(weights=args.weights)
     elif action == 'predict':
         predict_masks(args.fold)
+    elif action == 'predict_test':
+        predict_masks_test()
     elif action == 'find_ruler':
         find_ruler_rect('00WK7DR6FyPZ5u3A')
     elif action == 'find_ruler_angles':
         find_ruler_angles()
+    elif action == 'find_ruler_angles_test':
+        find_ruler_angles_test()
     elif action == 'find_ruler_vectors':
         find_ruler_points()
+    elif action == 'find_ruler_vectors_test':
+        find_ruler_points(avg_masks_dir=AVG_MASKS_DIR_TEST, res_suffix='_test')
     elif action == 'check_ruler_points':
         check_ruler_points()
     elif action == 'generate_crops':
         generate_crops()
-    # check_dataset()
+    elif action == 'generate_crops_test':
+        generate_crops_test()
+

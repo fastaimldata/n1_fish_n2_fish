@@ -1,3 +1,4 @@
+import argparse
 from collections import namedtuple
 
 import numpy as np
@@ -130,6 +131,7 @@ class SampleCfg:
                  angle=0.0,
                  hflip=False,
                  vflip=False,
+                 blurred_by_downscaling=1,
                  random_pos=False,
                  ssd_detection=None):
         self.color_shift = color_shift
@@ -145,6 +147,7 @@ class SampleCfg:
         self.brightness = brightness
         self.contrast = contrast
         self.saturation = saturation
+        self.blurred_by_downscaling = blurred_by_downscaling
         self.cache_img = False
 
         w = np.clip(fish_classification.w + 64, 200, 360)
@@ -298,7 +301,8 @@ class ClassificationDataset(fish_detection.FishDetectionDataset):
                                 )
                             )
                         # keep no fish also here, so classificator learns to fix detector mistakes
-                        ssd_detection = load_ssd_detection(video_id, frame)
+                        ssd_detection = load_ssd_detection(video_id, frame,
+                                                           data_dir='../output/predictions_ssd_roi2/resnet_53')
                         species_class = guess_species(known_species[video_id], frame)
                         if ssd_detection is not None and species_class is not None:
                             data.append(
@@ -337,6 +341,9 @@ class ClassificationDataset(fish_detection.FishDetectionDataset):
 
         if cfg.vflip:
             crop = img_augmentation.vertical_flip(crop)
+
+        if cfg.blurred_by_downscaling != 1:
+            crop = img_augmentation.blurred_by_downscaling(crop, 1.0 / cfg.blurred_by_downscaling)
         return crop * 255.0
 
     def generate_xy(self, cfg: SampleCfg):
@@ -362,7 +369,8 @@ class ClassificationDataset(fish_detection.FishDetectionDataset):
                             shift_y_ratio=random.uniform(-0.2, 0.2),
                             angle=random.uniform(-20.0, 20.0),
                             hflip=random.choice([True, False]),
-                            vflip=random.choice([True, False])
+                            vflip=random.choice([True, False]),
+                            blurred_by_downscaling=np.random.choice([1, 1, 1, 1, 1, 1, 1, 1, 2, 2.5, 3, 4])
                             )
             if verbose:
                 print(cfg)
@@ -450,7 +458,7 @@ def test_guess_species():
 def check_dataset_generator():
     dataset = ClassificationDataset(fold=1)
 
-    batch_size = 4
+    batch_size = 2
     for x_batch, y_batch in dataset.generate(batch_size=batch_size, skip_pp=True, verbose=True):
         print(y_batch)
         for i in range(batch_size):
@@ -466,7 +474,7 @@ def train(fold, continue_from_epoch=0, weights='', batch_size=8):
     model = build_model_densenet_161()
     model.summary()
 
-    model_name = 'model_densenet161'
+    model_name = 'model_densenet161_ds3'
     checkpoints_dir = '../output/checkpoints/classification/{}_fold_{}'.format(model_name, fold)
     tensorboard_dir = '../output/tensorboard/classification/{}_fold_{}'.format(model_name, fold)
     os.makedirs(checkpoints_dir, exist_ok=True)
@@ -479,10 +487,10 @@ def train(fold, continue_from_epoch=0, weights='', batch_size=8):
         if epoch < 1:
             return 5e-4
         if epoch < 5:
-            return 2e-4
-        if epoch < 15:
+            return 3e-4
+        if epoch < 10:
             return 1e-4
-        if epoch < 30:
+        if epoch < 20:
             return 5e-5
         return 2e-5
 
@@ -511,7 +519,7 @@ def train(fold, continue_from_epoch=0, weights='', batch_size=8):
     utils.lock_layers_until(model, 'pool4')
     model.summary()
 
-    nb_epoch = 400
+    nb_epoch = 20
     model.fit_generator(dataset.generate(batch_size=batch_size),
                         steps_per_epoch=dataset.train_batches(batch_size),
                         epochs=nb_epoch,
@@ -560,11 +568,12 @@ def generate_crops_from_detection_results(crops_dir,
                                           classification_crops_dir,
                                           save_jpegs):
     print('load ssd results:')
+    os.makedirs(classification_crops_dir, exist_ok=True)
     configs = []
     video_ids = sorted(os.listdir(detection_results_dir))
     for i, video_id in enumerate(video_ids):
         if i % 10 == 0:
-            print('{} / {}, {:.2}%'.format(i, len(video_ids), 100.0*i/len(video_ids)))
+            print('{} / {}, {:.2}%'.format(i, len(video_ids), 100.0 * i / len(video_ids)))
         video_clip_dir = os.path.join(detection_results_dir, video_id)
         for detection_fn in sorted(os.listdir(video_clip_dir)):
             if not detection_fn.endswith('.npy'):
@@ -603,11 +612,14 @@ def generate_crops_from_detection_results(crops_dir,
                                       '{:04}.jpg'.format(int(cfg.fish_classification.frame) + 1))
             scipy.misc.imsave(dst_jpg_fn, crop)
 
-        dst_fn = os.path.join(classification_crops_dir,
-                              cfg.fish_classification.video_id,
-                              '{:04}.npy'.format(int(cfg.fish_classification.frame) + 1))
-        crop *= 255.0
-        np.save(dst_fn, np.clip(crop, 0, 255).astype(np.uint8))
+        # dst_fn = os.path.join(classification_crops_dir,
+        #                       cfg.fish_classification.video_id,
+        #                       '{:04}.npy'.format(int(cfg.fish_classification.frame) + 1))
+        # utils.print_stats('crop', crop)
+        # utils.print_stats('crop conv', np.clip(crop, 0, 255).astype(np.uint8))
+        #
+        # crop *= 255.0
+        # np.save(dst_fn, np.clip(crop, 0, 255).astype(np.uint8))
 
     print('process samples')
     # process_sample(configs[0])
@@ -621,7 +633,7 @@ def save_detection_results(detection_results_dir, output_dir):
     os.makedirs(output_dir, exist_ok=True)
     for i, video_id in enumerate(video_ids):
         if i % 10 == 0:
-            print('{} / {}, {:.2}%'.format(i, len(video_ids), 100.0*i/len(video_ids)))
+            print('{} / {}, {:.2}%'.format(i, len(video_ids), 100.0 * i / len(video_ids)))
         configs = []
         video_clip_dir = os.path.join(detection_results_dir, video_id)
         for detection_fn in sorted(os.listdir(video_clip_dir)):
@@ -653,10 +665,10 @@ def save_detection_results(detection_results_dir, output_dir):
         df['h'] = [cfg.ssd_detection.h for cfg in configs]
         df['detection_conf'] = [cfg.ssd_detection.confidence for cfg in configs]
         df['detection_species'] = [cfg.ssd_detection.class_id for cfg in configs]
-        df.to_csv(os.path.join(output_dir, video_id+'_ssd_detection.csv'), index=False, float_format='%.8f')
+        df.to_csv(os.path.join(output_dir, video_id + '_ssd_detection.csv'), index=False, float_format='%.8f')
 
 
-def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, output_dir):
+def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, output_dir, video_ids=None):
     model = build_model_densenet_161()
     model.load_weights(weights)
 
@@ -664,7 +676,8 @@ def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, outp
 
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=16)
 
-    video_ids = sorted(dataset.fold_test_video_ids(fold))
+    if video_ids is None:
+        video_ids = sorted(dataset.fold_test_video_ids(fold))
 
     batch_size = 8
     for video_id in video_ids:
@@ -681,7 +694,7 @@ def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, outp
                     # img = np.load(os.path.join(src_dir, fn))
                     # plt.imshow(img)
                     # plt.show()
-                    img = img.astype(np.float32)   # * 255.0
+                    img = img.astype(np.float32)  # * 255.0
                     res.append(img)
                 res = np.array(res)
                 yield preprocess_input(res)
@@ -689,7 +702,7 @@ def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, outp
         results_species = []
         results_cover = []
         for batch_data in utils.parallel_generator(load_data(), executor):
-        # for batch_data in load_data():
+            # for batch_data in load_data():
             res_species, res_cover = model.predict_on_batch(batch_data)
             #
             # for i in range(batch_data.shape[0]):
@@ -701,7 +714,7 @@ def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, outp
             results_species.append(res_species)
             results_cover.append(res_cover)
 
-        frames = [int(f[:-len('.npy')])-1 for f in files]
+        frames = [int(f[:-len('.npy')]) - 1 for f in files]
         df = pd.DataFrame({'frame': frames})
         df['video_id'] = video_id
 
@@ -709,38 +722,61 @@ def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, outp
         results_cover = np.row_stack(results_cover)
 
         for i, species_cls in enumerate(SPECIES_CLASSES):
-            df['species_'+species_cls] = results_species[:, i]
+            df['species_' + species_cls] = results_species[:, i]
 
         for i, cover_cls in enumerate(COVER_CLASSES):
             df[cover_cls] = results_cover[:, i]
 
-        df.to_csv(os.path.join(output_dir, video_id+'_categories.csv'), index=False, float_format='%.4f')
+        df.to_csv(os.path.join(output_dir, video_id + '_categories.csv'), index=False, float_format='%.4f')
         # break
 
 
 if __name__ == '__main__':
-    action = sys.argv[1]
-    # action = 'check_dataset_generator'
+    parser = argparse.ArgumentParser(description='ruler masks')
+    parser.add_argument('action', type=str, default='check')
+    parser.add_argument('--weights', type=str, default='')
+    parser.add_argument('--detection_model', type=str, default='')
+    parser.add_argument('--fold', type=int, default=0)
+    parser.add_argument('--initial_epoch', type=int, default=0)
 
-    # test_guess_species()
+    args = parser.parse_args()
+    action = args.action
+    detection_model = args.detection_model
 
     if action == 'train':
-        train(fold=int(sys.argv[2]))
+        train(fold=args.fold, weights=args.weights, continue_from_epoch=args.initial_epoch)
     if action == 'check_dataset_generator':
         check_dataset_generator()
     if action == 'check':
-        check(fold=int(sys.argv[2]), weights=sys.argv[3])
+        check(fold=args.fold, weights=args.weights)
     if action == 'generate_train_classification_crops':
         generate_crops_from_detection_results(crops_dir=dataset.RULER_CROPS_DIR,
-                                              detection_results_dir='../output/predictions_ssd_roi2/vgg_41',
-                                              classification_crops_dir='../output/classification_crop',
+                                              detection_results_dir='../output/predictions_ssd_roi2/' + detection_model,
+                                              classification_crops_dir='../output/classification_crop/' + detection_model,
+                                              save_jpegs=True)
+    if action == 'generate_test_classification_crops':
+        generate_crops_from_detection_results(crops_dir=dataset.RULER_CROPS_DIR_TEST,
+                                              detection_results_dir='../output/predictions_ssd_roi2_test/' + detection_model,
+                                              classification_crops_dir='../output/classification_crop_test/' + detection_model,
                                               save_jpegs=True)
     if action == 'generate_results_from_detection_crops_on_fold':
-        generate_results_from_detection_crops_on_fold(fold=int(sys.argv[2]),
-                                                      weights=sys.argv[3],
-                                                      crops_dir='../output/classification_crop',
-                                                      output_dir='../output/classification_results')
+        generate_results_from_detection_crops_on_fold(fold=args.fold,
+                                                      weights=args.weights,
+                                                      crops_dir='../output/classification_crop/' + detection_model,
+                                                      output_dir='../output/classification_results/' + detection_model)
+
+    if action == 'generate_test_results_from_detection_crops_on_fold':
+        generate_results_from_detection_crops_on_fold(
+            fold=0,
+            weights=args.weights,
+            crops_dir='../output/classification_crop_test/' + detection_model,
+            output_dir='../output/classification_results_test/{}/{}'.format(detection_model, args.fold),
+            video_ids=sorted(dataset.video_clips_test().keys()))
 
     if action == 'save_detection_results':
-        save_detection_results(detection_results_dir='../output/predictions_ssd_roi2/vgg_41',
-                               output_dir='../output/detection_results')
+        save_detection_results(detection_results_dir='../output/predictions_ssd_roi2/' + detection_model,
+                               output_dir='../output/detection_results/' + detection_model)
+
+    if action == 'save_detection_results_test':
+        save_detection_results(detection_results_dir='../output/predictions_ssd_roi2_test/' + detection_model,
+                               output_dir='../output/detection_results_test/' + detection_model)
