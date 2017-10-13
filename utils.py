@@ -104,6 +104,16 @@ def save_compressed_data(data, file_name):
     f.close()
 
 
+def load_data(file_name):
+    with open(file_name, 'rb') as f:
+        data = pickle.load(f)
+    return data
+
+
+def save_data(data, file_name):
+    pickle.dump(data, open(file_name, 'wb'))
+
+
 def lock_layers_until(model, first_trainable_layer, verbose=False):
     found_first_layer = False
     for layer in model.layers:

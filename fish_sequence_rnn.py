@@ -32,7 +32,9 @@ NUM_CLASSES = 1
 IMG_WITH = 720
 IMG_HEIGHT = 360
 
-NB_FEATURES = 17
+DETECTION_MODELS = ['resnet_53', 'resnet_62']
+
+NB_FEATURES = 17 * len(DETECTION_MODELS)
 NB_STEPS = 256
 NB_STEPS_CROP = 32
 NB_RES_STEPS = NB_STEPS - NB_STEPS_CROP * 2
@@ -43,9 +45,10 @@ USE_CUMSUM = True
 
 def model_gru1(input_shape=INPUT_SHAPE):
     inputs = Input(shape=input_shape)
-    x = Bidirectional(GRU(16, return_sequences=True))(inputs)
-    # x = Bidirectional(x)
+    x = Bidirectional(GRU(64, return_sequences=True, unroll=True))(inputs)
+    x = Bidirectional(GRU(16, return_sequences=True, unroll=True))(x)
     x = Dense(1, activation='sigmoid')(x)
+    x = Cropping1D(cropping=(NB_STEPS_CROP, NB_STEPS_CROP))(x)
     x = Flatten()(x)
     model = Model(inputs=inputs, outputs=x)
     model.compile(optimizer=Adam(), loss='binary_crossentropy', metrics=['accuracy'])
@@ -53,14 +56,13 @@ def model_gru1(input_shape=INPUT_SHAPE):
     return model
 
 
-def model_gru1_cumsum(input_shape=INPUT_SHAPE):
+def model_gru1_cumsum(input_shape=INPUT_SHAPE, unroll=True):
     inputs = Input(shape=input_shape)
-    x = Bidirectional(GRU(64, return_sequences=True))(inputs)
-    x = Bidirectional(GRU(16, return_sequences=True))(x)
+    x = Bidirectional(GRU(64, return_sequences=True, unroll=unroll))(inputs)
+    x = Bidirectional(GRU(16, return_sequences=True, unroll=unroll))(x)
     x = Dense(1, activation='sigmoid')(x)
     x = Cropping1D(cropping=(NB_STEPS_CROP, NB_STEPS_CROP))(x)
     x = Flatten(name='current_values')(x)
-
 
     cumsum_value = Lambda(lambda a: K.cumsum(a, axis=1), name='cumsum_values')(x)
 
@@ -94,15 +96,23 @@ class Dataset:
     def __init__(self, fold,
                  detection_results_dir='../output/detection_results',
                  classification_results_dir='../output/classification_results',
-                 load_only_video_ids=None):
-        self.video_clips = dataset.video_clips()
+                 train_on_all_dataset=True,
+                 load_only_video_ids=None,
+                 is_test=False):
+
+        self.video_clips = dataset.video_clips(is_test=is_test)
 
         if load_only_video_ids is not None:
             all_video_ids = set(load_only_video_ids)
         else:
             all_video_ids = set(self.video_clips.keys())
-        self.test_video_ids = set(dataset.fold_test_video_ids(fold))
-        self.train_video_ids = all_video_ids.difference(self.test_video_ids)
+
+        if train_on_all_dataset:
+            self.test_video_ids = []
+            self.train_video_ids = all_video_ids
+        else:
+            self.test_video_ids = set(dataset.fold_test_video_ids(fold))
+            self.train_video_ids = all_video_ids.difference(self.test_video_ids)
 
         self.gt = pd.read_csv('../input/N1_fish_N2_fish_-_Training_set_annotations.csv')
         self.gt.dropna(axis=0, inplace=True)
@@ -112,63 +122,92 @@ class Dataset:
         self.video_data = {}
         self.video_data_gt = {}
 
+        print('load video data...')
+        cache_fn = '../output/sequence_rnn_test.pkl' if is_test else '../output/sequence_rnn_train.pkl'
+        try:
+            self.video_frames_count, self.video_data, self.video_data_gt, self.columns = utils.load_data(cache_fn)
+        except FileNotFoundError:
+            self.video_frames_count, self.video_data, self.video_data_gt, self.columns = self.load(all_video_ids,
+                                                                          detection_results_dir,
+                                                                          classification_results_dir)
+            utils.save_data((self.video_frames_count, self.video_data, self.video_data_gt, self.columns), cache_fn)
+        print('loaded')
+
+    def load(self, all_video_ids, detection_results_dir, classification_results_dir):
+        print('generate video data...')
+        video_frames_count = {}
+        video_data = {}
+        video_data_gt = {}
+        columns = {}
+
         for video_id in sorted(all_video_ids):
-            try:
-                ds_detection = pd.read_csv(os.path.join(detection_results_dir, video_id + '_ssd_detection.csv'))
-                ds_classification = pd.read_csv(os.path.join(classification_results_dir, video_id + '_categories.csv'))
-            except FileNotFoundError:
-                continue
-
-            ds_combined = ds_classification.join(ds_detection, on='frame', how='left', rsuffix='_det')
-            ds_combined.x /= IMG_WITH
-            ds_combined.y /= IMG_HEIGHT
-            ds_combined.w /= IMG_WITH
-            ds_combined.h /= IMG_HEIGHT
-
+            results = []
             nb_frames = len(self.video_clips[video_id])
-            self.video_frames_count[video_id] = nb_frames
+            video_frames_count[video_id] = nb_frames
+
+            for detection_model in DETECTION_MODELS:
+                # try:
+                ds_detection = pd.read_csv(
+                    os.path.join(detection_results_dir, detection_model, video_id + '_ssd_detection.csv'))
+                ds_classification = pd.read_csv(
+                    os.path.join(classification_results_dir, detection_model, video_id + '_categories.csv'))
+                # except FileNotFoundError:
+                #     continue
+
+                ds_combined = ds_classification.join(ds_detection, on='frame', how='left', rsuffix='_det')
+                ds_combined.x /= IMG_WITH
+                ds_combined.y /= IMG_HEIGHT
+                ds_combined.w /= IMG_WITH
+                ds_combined.h /= IMG_HEIGHT
+                all_frames = pd.DataFrame({'frame': list(range(nb_frames))})
+                ds_combined = all_frames.merge(ds_combined, on='frame', how='left').fillna(0.0)
+
+                ds_combined['species__'] = 1.0 - (
+                    ds_combined['species_fourspot'] +
+                    ds_combined['species_grey sole'] +
+                    ds_combined['species_other'] +
+                    ds_combined['species_plaice'] +
+                    ds_combined['species_summer'] +
+                    ds_combined['species_windowpane'] +
+                    ds_combined['species_winter'])
+
+                columns = ['species__', 'species_fourspot', 'species_grey sole', 'species_other', 'species_plaice',
+                                'species_summer', 'species_windowpane', 'species_winter', 'no fish', 'hand over fish',
+                                'fish clear', 'x', 'y', 'w', 'h', 'detection_conf', 'detection_species']
+                results.append(ds_combined.as_matrix(columns=columns))
+
+            video_data[video_id] = np.hstack(results)
+
             all_frames = pd.DataFrame({'frame': list(range(nb_frames))})
-            ds_combined = all_frames.merge(ds_combined, on='frame', how='left').fillna(0.0)
+            gt_combined = all_frames.merge(self.gt.loc[self.gt.video_id == video_id], on='frame', how='left').fillna(
+                0.0)
+            video_data_gt[video_id] = gt_combined.as_matrix(columns=['have_frame'])
 
-            ds_combined['species__'] = 1.0 - (
-                ds_combined['species_fourspot'] +
-                ds_combined['species_grey sole'] +
-                ds_combined['species_other'] +
-                ds_combined['species_plaice'] +
-                ds_combined['species_summer'] +
-                ds_combined['species_windowpane'] +
-                ds_combined['species_winter'])
+        return video_frames_count, video_data, video_data_gt, columns
 
-            self.columns = ['species__', 'species_fourspot', 'species_grey sole', 'species_other', 'species_plaice',
-                         'species_summer', 'species_windowpane', 'species_winter', 'no fish', 'hand over fish',
-                         'fish clear', 'x', 'y', 'w', 'h', 'detection_conf', 'detection_species']
-            self.video_data[video_id] = ds_combined.as_matrix(columns=self.columns)
-
-            gt_combined = all_frames.merge(self.gt.loc[self.gt.video_id == video_id], on='frame', how='left').fillna(0.0)
-            self.video_data_gt[video_id] = gt_combined.as_matrix(columns=['have_frame'])
-
-    def generate_x(self, video_id, offset):
-        res = np.zeros((NB_STEPS, NB_FEATURES))
+    def generate_x(self, video_id, offset, nb_steps=NB_STEPS):
+        res = np.zeros((nb_steps, NB_FEATURES))
+        nb_res_steps = nb_steps - NB_STEPS_CROP * 2
 
         nb_frames = self.video_frames_count[video_id]
         steps_before = min(NB_STEPS_CROP, offset)
-        steps_after = min(NB_STEPS_CROP, nb_frames - offset - NB_RES_STEPS)
+        steps_after = min(NB_STEPS_CROP, nb_frames - offset - nb_res_steps)
 
-        res[NB_STEPS_CROP - steps_before:NB_STEPS - NB_STEPS_CROP + steps_after, :] = \
-            self.video_data[video_id][offset-steps_before:offset+NB_RES_STEPS+steps_after, :]
+        res[NB_STEPS_CROP - steps_before:nb_steps - NB_STEPS_CROP + steps_after, :] = \
+            self.video_data[video_id][offset - steps_before:offset + nb_res_steps + steps_after, :]
         return res
 
     def generate_y(self, video_id, offset):
         res = np.zeros((NB_RES_STEPS,))
         nb_frames = self.video_frames_count[video_id]
-        frames_used = min(NB_RES_STEPS, nb_frames-offset)
-        res[0:frames_used] = self.video_data_gt[video_id][offset:offset+frames_used, 0]
+        frames_used = min(NB_RES_STEPS, nb_frames - offset)
+        res[0:frames_used] = self.video_data_gt[video_id][offset:offset + frames_used, 0]
         return res
 
     def generate(self, batch_size, use_cumsum=False):
         valid_video_ids = list(self.train_video_ids.intersection(self.video_data.keys()))
 
-        batch_x = np.zeros((batch_size,)+INPUT_SHAPE, dtype=np.float32)
+        batch_x = np.zeros((batch_size,) + INPUT_SHAPE, dtype=np.float32)
         batch_y = np.zeros((batch_size, NB_RES_STEPS), dtype=np.float32)
         # batch_y_sum = np.zeros((batch_size, NB_RES_STEPS), dtype=np.float32)
         while True:
@@ -178,7 +217,7 @@ class Dataset:
                 if self.video_frames_count[video_id] < NB_RES_STEPS:
                     offset = 0
                 else:
-                    offset = random.randrange(0, self.video_frames_count[video_id]-NB_RES_STEPS)
+                    offset = random.randrange(0, self.video_frames_count[video_id] - NB_RES_STEPS)
 
                 batch_x[batch_idx] = self.generate_x(video_id, offset)
                 batch_y[batch_idx] = self.generate_y(video_id, offset)
@@ -203,9 +242,10 @@ class Dataset:
         return batches_count
 
     def generate_test(self, batch_size, verbose=False, use_cumsum=False):
-        valid_video_ids = sorted(self.test_video_ids.intersection(self.video_data.keys()))
+        valid_video_ids = sorted(set(self.test_video_ids).intersection(self.video_data.keys()))
+        print('test valid_video_ids:', len(valid_video_ids))
 
-        batch_x = np.zeros((batch_size,)+INPUT_SHAPE, dtype=np.float32)
+        batch_x = np.zeros((batch_size,) + INPUT_SHAPE, dtype=np.float32)
         batch_y = np.zeros((batch_size, NB_RES_STEPS), dtype=np.float32)
         while True:
             batch_idx = 0
@@ -227,45 +267,63 @@ class Dataset:
                             yield batch_x, batch_y
 
 
-def train(fold=1, use_cumsum=USE_CUMSUM):
-    data = Dataset(fold)
+def train(fold=1, use_cumsum=USE_CUMSUM, train_on_all_dataset=True):
+    data = Dataset(fold, train_on_all_dataset=train_on_all_dataset)
 
     if use_cumsum:
-        model = model_lstm2_cumsum()
+        model = model_gru1_cumsum()
+        model_name = 'model_squence_gru1_cumsum'
     else:
         model = model_gru1()
+        model_name = 'model_squence_gru1'
+
+    if train_on_all_dataset:
+        model_name += '_all'
+
     model.summary()
 
-    model_name = 'model_squence_gru1_cumsum'
     checkpoints_dir = '../output/checkpoints/sequence/{}_fold_{}'.format(model_name, fold)
     tensorboard_dir = '../output/tensorboard/sequence/{}_fold_{}'.format(model_name, fold)
     os.makedirs(checkpoints_dir, exist_ok=True)
     os.makedirs(tensorboard_dir, exist_ok=True)
 
     def cheduler(epoch):
-        if epoch < 1:
+        if epoch < 10:
             return 5e-4
-        if epoch < 5:
+        if epoch < 20:
             return 2e-4
-        if epoch < 15:
+        if epoch < 50:
             return 1e-4
-        if epoch < 30:
+        if epoch < 100:
             return 5e-5
         return 2e-5
 
     validation_batch_size = 16
 
-    checkpoint_periodical = ModelCheckpoint(checkpoints_dir + "/checkpoint-{epoch:03d}-{val_loss:.4f}.hdf5",
-                                            verbose=1,
-                                            save_weights_only=True,
-                                            period=1)
+
     tensorboard = TensorBoard(tensorboard_dir, histogram_freq=0, write_graph=False, write_images=True)
     lr_sched = LearningRateScheduler(schedule=cheduler)
 
     nb_epoch = 800
-    batch_size = 512
+    batch_size = 128
+
+    if train_on_all_dataset:
+        checkpoint_periodical = ModelCheckpoint(checkpoints_dir + "/checkpoint-{epoch:03d}-{loss:.5f}.hdf5",
+                                                verbose=1,
+                                                save_weights_only=True,
+                                                period=1)
+        validation_data = None
+        validation_steps = None
+    else:
+        checkpoint_periodical = ModelCheckpoint(checkpoints_dir + "/checkpoint-{epoch:03d}-{val_loss:.5f}.hdf5",
+                                                verbose=1,
+                                                save_weights_only=True,
+                                                period=1)
+        validation_data = data.generate_test(batch_size=validation_batch_size, use_cumsum=use_cumsum),
+        validation_steps = data.test_batches(validation_batch_size),
+
     model.fit_generator(data.generate(batch_size=batch_size, use_cumsum=use_cumsum),
-                        steps_per_epoch=128,
+                        steps_per_epoch=512,
                         epochs=nb_epoch,
                         verbose=1,
                         callbacks=[
@@ -273,22 +331,23 @@ def train(fold=1, use_cumsum=USE_CUMSUM):
                             tensorboard,
                             lr_sched
                         ],
-                        validation_data=data.generate_test(batch_size=validation_batch_size, use_cumsum=use_cumsum),
-                        validation_steps=data.test_batches(validation_batch_size),
+                        validation_data=validation_data,
+                        validation_steps=validation_steps,
                         initial_epoch=0)
 
 
 def check(fold=1, use_cumsum=USE_CUMSUM):
     # data = Dataset(fold, load_only_video_ids=['00WK7DR6FyPZ5u3A'])
-    data = Dataset(fold)
+    data = Dataset(fold, train_on_all_dataset=False)
     if use_cumsum:
         model = model_gru1_cumsum()
     else:
         model = model_gru1()
 
-    #model.load_weights('../output/checkpoints/sequence/model_squence_gru1_cumsum_fold_1/checkpoint-201-0.0484.hdf5')
+    # model.load_weights('../output/checkpoints/sequence/model_squence_gru1_cumsum_fold_1/checkpoint-201-0.0484.hdf5')
     # model.load_weights('../output/checkpoints/sequence/model_squence_gru1_cumsum_fold_1/checkpoint-146-0.0509.hdf5')
-    model.load_weights('../output/checkpoints/sequence/model_squence_gru1_cumsum_fold_1/checkpoint-547-0.0439.hdf5')
+    # model.load_weights('../output/checkpoints/sequence/model_squence_gru1_cumsum_fold_1/checkpoint-547-0.0439.hdf5')
+    model.load_weights('../output/checkpoints/sequence/model_squence_gru1_cumsum_all_fold_0/checkpoint-110-0.06723.hdf5')
 
     for batch_x, yy in data.generate_test(batch_size=1, verbose=True, use_cumsum=use_cumsum):
         if use_cumsum:
@@ -312,7 +371,7 @@ def check(fold=1, use_cumsum=USE_CUMSUM):
         # plt.plot(gt*0.5)
 
         plt.figure()
-        frames = range(data.last_offset, data.last_offset+NB_RES_STEPS)
+        frames = range(data.last_offset, data.last_offset + NB_RES_STEPS)
         # plt.plot(frames, np.cumsum(prediction))
         # plt.plot(frames, np.cumsum(gt))
 
@@ -332,9 +391,50 @@ def check(fold=1, use_cumsum=USE_CUMSUM):
         plt.show()
 
 
+def predict_test(output_dir):
+    data = Dataset(fold=0,
+                   detection_results_dir='../output/detection_results_test',
+                   classification_results_dir='../output/classification_results_test_combined',
+                   train_on_all_dataset=False,
+                   is_test=True)
+    max_size = 10000
+    model = model_gru1_cumsum(input_shape=(max_size, NB_FEATURES), unroll=False)
+    model.load_weights('../output/checkpoints/sequence/model_squence_gru1_cumsum_all_fold_0/checkpoint-110-0.06723.hdf5')
+    os.makedirs(output_dir, exist_ok=True)
+
+    video_ids = sorted(list(data.video_clips.keys()))
+    X = np.array([data.generate_x(video_id, offset=0, nb_steps=max_size) for video_id in video_ids])
+    y = model.predict(X, batch_size=64, verbose=1)
+    print(y)
+    print(np.array(y).shape)
+    np.save(os.path.join(output_dir, 'key_fish_prob.npy'), np.array(y))
+    np.save(os.path.join(output_dir, 'key_fish_ids.npy'), np.array(video_ids))
+    #
+    # for video_id in utils.chunks(data.video_clips.keys(), n=128):
+    #     print(video_id)
+    #     X = data.generate_x(video_id, offset=0, nb_steps=max_size)
+    #     res = model.predict(np.array([X]), batch_size=1)[0]
+    #     print(res.shape)
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='find key fish with rnn')
+    parser.add_argument('action', type=str, default='check')
+    parser.add_argument('--weights', type=str, default='')
+    parser.add_argument('--detection_model', type=str, default='')
+    parser.add_argument('--fold', type=int, default=0)
+    parser.add_argument('--initial_epoch', type=int, default=0)
+
+    args = parser.parse_args()
+
+    action = args.action
+
+    if action == 'train_full':
+        train(fold=0, train_on_all_dataset=True)
+    if action == 'check':
+        check(fold=args.fold)
+    if action == 'predict_test':
+        predict_test(output_dir='../output/sequence_results_test')
     # parser = argparse.ArgumentParser(description='ruler masks')
     # parser.add_argument('action', type=str, default='check')
     # parser.add_argument('--weights', type=str, default='')
@@ -344,4 +444,4 @@ if __name__ == '__main__':
     #
     # action = args.action
     # train()
-    check()
+    # check()

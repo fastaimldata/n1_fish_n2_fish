@@ -668,7 +668,7 @@ def save_detection_results(detection_results_dir, output_dir):
         df.to_csv(os.path.join(output_dir, video_id + '_ssd_detection.csv'), index=False, float_format='%.8f')
 
 
-def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, output_dir, video_ids=None):
+def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, output_dir, video_ids=None, hflip=0, vflip=0):
     model = build_model_densenet_161()
     model.load_weights(weights)
 
@@ -690,6 +690,10 @@ def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, outp
                 for fn in batch_files:
                     # print('load', fn)
                     img = scipy.misc.imread(os.path.join(src_dir, fn))
+                    if hflip:
+                        img = img[:, ::-1]
+                    if vflip:
+                        img = img[::-1]
                     # utils.print_stats('img', img)
                     # img = np.load(os.path.join(src_dir, fn))
                     # plt.imshow(img)
@@ -731,12 +735,40 @@ def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, outp
         # break
 
 
+def combine_test_results(classification_results_dir, output_dir):
+    video_ids = sorted(list(dataset.video_clips_test().keys()))
+    os.makedirs(output_dir, exist_ok=True)
+
+    columns ='species__,species_fourspot,species_grey sole,species_other,species_plaice,species_summer,species_windowpane,species_winter,no fish,hand over fish,fish clear'.split(',')
+
+    for video_id in video_ids:
+        data_frames = [
+            pd.read_csv(os.path.join(classification_results_dir, str(fold)+fold_suffix, video_id+'_categories.csv'))
+            for fold in range(1, 5)
+            for fold_suffix in ['', '_hflip']
+        ]
+
+        combined = pd.concat(data_frames)
+        by_row_index = combined.groupby('frame')
+        df_means = by_row_index.mean()
+        # print(video_id)
+        # print(df_means.head())
+
+        res_df = data_frames[0]
+        for col in columns:
+            res_df[col] = df_means[col].as_matrix()
+
+        res_df.to_csv(os.path.join(output_dir, video_id + '_categories.csv'), index=False, float_format='%.4f')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='ruler masks')
-    parser.add_argument('action', type=str, default='check')
+    parser.add_argument('action', type=str, default='combine_results_test')
     parser.add_argument('--weights', type=str, default='')
     parser.add_argument('--detection_model', type=str, default='')
     parser.add_argument('--fold', type=int, default=0)
+    parser.add_argument('--hflip', type=int, default=0)
+    parser.add_argument('--vflip', type=int, default=0)
     parser.add_argument('--initial_epoch', type=int, default=0)
 
     args = parser.parse_args()
@@ -766,12 +798,20 @@ if __name__ == '__main__':
                                                       output_dir='../output/classification_results/' + detection_model)
 
     if action == 'generate_test_results_from_detection_crops_on_fold':
+        suffix = ''
+        if args.hflip:
+            suffix += '_hflip'
+        if args.vflip:
+            suffix += '_vflip'
         generate_results_from_detection_crops_on_fold(
             fold=0,
             weights=args.weights,
             crops_dir='../output/classification_crop_test/' + detection_model,
-            output_dir='../output/classification_results_test/{}/{}'.format(detection_model, args.fold),
-            video_ids=sorted(dataset.video_clips_test().keys()))
+            output_dir='../output/classification_results_test/{}/{}{}'.format(detection_model, args.fold, suffix),
+            video_ids=sorted(dataset.video_clips_test().keys()),
+            hflip=args.hflip,
+            vflip=args.vflip
+        )
 
     if action == 'save_detection_results':
         save_detection_results(detection_results_dir='../output/predictions_ssd_roi2/' + detection_model,
@@ -780,3 +820,7 @@ if __name__ == '__main__':
     if action == 'save_detection_results_test':
         save_detection_results(detection_results_dir='../output/predictions_ssd_roi2_test/' + detection_model,
                                output_dir='../output/detection_results_test/' + detection_model)
+
+    if action == 'combine_results_test':
+        combine_test_results(classification_results_dir='../output/classification_results_test/' + detection_model,
+                             output_dir='../output/classification_results_test_combined/' + detection_model)
