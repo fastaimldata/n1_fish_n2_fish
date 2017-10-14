@@ -12,6 +12,12 @@ import fish_detection
 from typing import List
 from numpy.testing import assert_array_equal
 
+MAX_ROWS = 10000
+
+SPECIES_COLS = ['species_' + species for species in dataset.SPECIES]
+COVER_COLS = ['no fish', 'hand over fish', 'fish clear']
+CLS_COLS = SPECIES_COLS + COVER_COLS
+
 
 def load_key_frames(sequence_res_dir='../output/sequence_results_test'):
     predictions = np.load(os.path.join(sequence_res_dir, 'key_fish_prob.npy'))
@@ -78,31 +84,29 @@ def prepare_submission():
     print('load detections:')
     try:
         detections, classifications, fish_numbers = utils.load_data('../output/cache_submission_det_csl.pkl')
+        raise FileNotFoundError
     except FileNotFoundError:
         detections = {}
         for video_id in orig_submission.video_id.unique():
-            detection_res = pd.concat([
-                pd.read_csv('../output/detection_results_test/resnet_53/{}_ssd_detection.csv'.format(video_id)),
-                pd.read_csv('../output/detection_results_test/resnet_62/{}_ssd_detection.csv'.format(video_id))]
-            )
-
-            detection_res.set_index('frame')
-            detections[video_id] = detection_res
+            df = pd.read_csv('../output/detection_results_test/resnet_53/{}_ssd_detection.csv'.format(video_id))
+            df_full = pd.DataFrame({'frame': range(MAX_ROWS)})
+            detection_res = df_full.merge(df, on='frame', how='left')
+            detections[video_id] = detection_res['w'].fillna(0.0).as_matrix()
 
         print('load classifications:')
         classifications = {}
         for video_id in orig_submission.video_id.unique():
-            classification_res = pd.concat([
-                pd.read_csv('../output/classification_results_test_combined/resnet_53/{}_categories.csv'.format(video_id)),
-                pd.read_csv('../output/classification_results_test_combined/resnet_62/{}_categories.csv'.format(video_id))])
-
-            classification_res.set_index('frame')
-            classifications[video_id] = classification_res
+            cls_res = np.zeros((MAX_ROWS, len(CLS_COLS)), dtype=np.float32)
+            for cls_id in ['resnet_53', 'resnet_62']:
+                df = pd.read_csv('../output/classification_results_test_combined/{}/{}_categories.csv'.format(cls_id, video_id))
+                df_full = pd.DataFrame({'frame': range(MAX_ROWS)})
+                cls_res += df_full.merge(df, on='frame', how='left').fillna(0.0).as_matrix(columns=CLS_COLS) * 0.5
+            classifications[video_id] = cls_res
 
         print('load fish numbers:')
         fish_numbers = {}
         for video_id in orig_submission.video_id.unique():
-            fish_numbers[video_id] = key_frames_to_frame_numbers(sorted(key_frames[video_id]), res_size=10000)
+            fish_numbers[video_id] = key_frames_to_frame_numbers(sorted(key_frames[video_id]), res_size=MAX_ROWS)
 
         utils.save_data([detections, classifications, fish_numbers], '../output/cache_submission_det_csl.pkl')
 
@@ -111,32 +115,40 @@ def prepare_submission():
     for video_id in orig_submission.video_id.unique():
         transforms[video_id] = detection_ds.transform_for_clip(video_id)
 
-    for res_row, row in orig_submission.iterrows():
-        video_id = row.video_id
-        frame = row.frame
+    FRAME_IDX = 1
+    VIDEO_ID_IDX = 2
+    FISH_NUMBER_IDX = 3
+    LENGTH_IDX = 4
+    SPECIES_START_IDX = 5
+
+    orig_submission_array = orig_submission.as_matrix()
+    for res_row in range(orig_submission_array.shape[0]):
+        row = orig_submission_array[res_row]
+
+        video_id = row[VIDEO_ID_IDX]
+        frame = row[FRAME_IDX]
 
         if res_row % 1000 == 0:
-            print(res_row, res_row*100.0 / orig_submission.shape[0])
+            print(res_row, res_row*100.0 / orig_submission_array.shape[0])
 
-        orig_submission.loc[res_row, 'fish_number'] = fish_numbers[video_id][frame]
+        orig_submission_array[res_row, FISH_NUMBER_IDX] = fish_numbers[video_id][frame]
+        w = detections[video_id][frame]
+        vector_global = transforms[video_id](np.array([[0, 0], [w, 0]]))
+        length = np.linalg.norm(vector_global[0] - vector_global[1])
+        orig_submission_array[res_row, LENGTH_IDX] = length
 
-        try:
-            det = detections[video_id].loc[frame]
-            w = det.w.mean()
-            vector_global = transforms[video_id](np.array([[0, 0], [w, 0]]))
-            length = np.linalg.norm(vector_global[0] - vector_global[1])
-            orig_submission.loc[res_row, 'length'] = length
+        cls = classifications[video_id][frame]
+        clear_conf = cls[-1]
+        orig_submission_array[res_row, SPECIES_START_IDX:] = cls[:len(SPECIES_COLS)] * (
+            0.595 + 0.4 * clear_conf)
 
-            cls = classifications[video_id].loc[frame]
-            clear_conf = cls['fish clear'].mean()
-            for species in dataset.SPECIES:
-                orig_submission.loc[res_row, 'species_' + species] = cls['species_' + species].mean() * (0.695 + 0.3 * clear_conf)
-        except KeyError:
-            pass
+    orig_submission['fish_number'] = orig_submission_array[:, FISH_NUMBER_IDX].astype(np.float32)
+    orig_submission['length'] = orig_submission_array[:, LENGTH_IDX]
+    for species_idx, species in enumerate(SPECIES_COLS):
+        orig_submission[species] = orig_submission_array[:, SPECIES_START_IDX+species_idx]
 
-    orig_submission.to_csv('../output/submission3.csv', index=False, float_format='%.8f')
+    orig_submission.to_csv('../output/submission4.csv', index=False, float_format='%.6f')
 
 
 if __name__ == '__main__':
-    # load_key_frames()
     prepare_submission()
