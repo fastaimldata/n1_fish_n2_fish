@@ -745,7 +745,7 @@ def combine_test_results(classification_results_dir, output_dir):
         data_frames = [
             pd.read_csv(os.path.join(classification_results_dir, str(fold)+fold_suffix, video_id+'_categories.csv'))
             for fold in range(1, 5)
-            for fold_suffix in ['', '_hflip']
+            for fold_suffix in ['', '_hflip', '_vflip', '_hflip_vflip']
         ]
 
         combined = pd.concat(data_frames)

@@ -143,11 +143,11 @@ def prepare_submission():
             0.595 + 0.4 * clear_conf)
 
     orig_submission['fish_number'] = orig_submission_array[:, FISH_NUMBER_IDX].astype(np.float32)
-    orig_submission['length'] = orig_submission_array[:, LENGTH_IDX]
+    orig_submission['length'] = orig_submission_array[:, LENGTH_IDX].astype(np.float32)
     for species_idx, species in enumerate(SPECIES_COLS):
-        orig_submission[species] = orig_submission_array[:, SPECIES_START_IDX+species_idx]
+        orig_submission[species] = orig_submission_array[:, SPECIES_START_IDX+species_idx].astype(np.float32)
 
-    orig_submission.to_csv('../output/submission4.csv', index=False, float_format='%.6f')
+    orig_submission.to_csv('../output/submission5.csv', index=False, float_format='%.8f')
 
 
 if __name__ == '__main__':
