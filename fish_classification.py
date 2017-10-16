@@ -20,6 +20,7 @@ from keras.layers.merge import concatenate
 from keras.models import Model
 from keras.optimizers import Adam
 from keras.utils import to_categorical
+from keras.applications import ResNet50
 
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -80,6 +81,21 @@ def build_model_densenet_161():
     model.compile(optimizer=sgd, loss='categorical_crossentropy', metrics=['accuracy'])
 
     return model
+
+
+def build_model_resnet50():
+    img_input = Input(INPUT_SHAPE, name='data')
+    base_model = ResNet50(input_tensor=img_input, include_top=False, pooling='avg')
+
+    species_dense = Dense(len(SPECIES_CLASSES), activation='softmax', name='cat_species')(base_model.layers[-1].output)
+    cover_dense = Dense(len(COVER_CLASSES), activation='softmax', name='cat_cover')(base_model.layers[-1].output)
+
+    model = Model(input=img_input, outputs=[species_dense, cover_dense])
+    sgd = SGD(lr=1e-3, decay=1e-6, momentum=0.9, nesterov=True)
+    model.compile(optimizer=sgd, loss='categorical_crossentropy', metrics=['accuracy'])
+
+    return model
+
 
 
 def build_model_densenet_121():
@@ -468,13 +484,25 @@ def check_dataset_generator():
             plt.show()
 
 
-def train(fold, continue_from_epoch=0, weights='', batch_size=8):
+def train(fold, continue_from_epoch=0, weights='', batch_size=8, model_type='densenet'):
     dataset = ClassificationDataset(fold=fold)
 
-    model = build_model_densenet_161()
+    if model_type == 'densenet':
+        model = build_model_densenet_161()
+        model_name = 'model_densenet161_ds3'
+        lock_layer1 = 'pool5'
+        lock_layer2 = 'pool4'
+    elif model_type == 'resnet50':
+        model = build_model_resnet50()
+        model_name = 'model_resnet50_cat'
+        lock_layer1 = 'activation_49'
+        lock_layer2 = 'activation_40'
+    else:
+        print('Invalid model_type', model_type)
+        return
+
     model.summary()
 
-    model_name = 'model_densenet161_ds3'
     checkpoints_dir = '../output/checkpoints/classification/{}_fold_{}'.format(model_name, fold)
     tensorboard_dir = '../output/tensorboard/classification/{}_fold_{}'.format(model_name, fold)
     os.makedirs(checkpoints_dir, exist_ok=True)
@@ -497,7 +525,7 @@ def train(fold, continue_from_epoch=0, weights='', batch_size=8):
     validation_batch_size = 8
 
     if continue_from_epoch == 0:
-        utils.lock_layers_until(model, 'pool5')
+        utils.lock_layers_until(model, lock_layer1)
         model.summary()
         model.fit_generator(dataset.generate(batch_size=batch_size),
                             steps_per_epoch=dataset.train_batches(batch_size),
@@ -516,10 +544,10 @@ def train(fold, continue_from_epoch=0, weights='', batch_size=8):
     tensorboard = TensorBoard(tensorboard_dir, histogram_freq=0, write_graph=False, write_images=True)
     lr_sched = LearningRateScheduler(schedule=cheduler)
 
-    utils.lock_layers_until(model, 'pool4')
+    utils.lock_layers_until(model, lock_layer2)
     model.summary()
 
-    nb_epoch = 20
+    nb_epoch = 10
     model.fit_generator(dataset.generate(batch_size=batch_size),
                         steps_per_epoch=dataset.train_batches(batch_size),
                         epochs=nb_epoch,
@@ -668,8 +696,16 @@ def save_detection_results(detection_results_dir, output_dir):
         df.to_csv(os.path.join(output_dir, video_id + '_ssd_detection.csv'), index=False, float_format='%.8f')
 
 
-def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, output_dir, video_ids=None, hflip=0, vflip=0):
-    model = build_model_densenet_161()
+def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, output_dir, video_ids=None,
+                                                  hflip=0, vflip=0, model_type=''):
+    if model_type == 'densenet':
+        model = build_model_densenet_161()
+    elif model_type == 'resnet50':
+        model = build_model_resnet50()
+    else:
+        print('Invalid model_type', model_type)
+        return
+
     model.load_weights(weights)
 
     os.makedirs(output_dir, exist_ok=True)
@@ -770,13 +806,15 @@ if __name__ == '__main__':
     parser.add_argument('--hflip', type=int, default=0)
     parser.add_argument('--vflip', type=int, default=0)
     parser.add_argument('--initial_epoch', type=int, default=0)
+    parser.add_argument('--classification_model', type=str)
 
     args = parser.parse_args()
     action = args.action
     detection_model = args.detection_model
+    classification_model = args.classification_model
 
     if action == 'train':
-        train(fold=args.fold, weights=args.weights, continue_from_epoch=args.initial_epoch)
+        train(fold=args.fold, weights=args.weights, continue_from_epoch=args.initial_epoch, model_type=classification_model)
     if action == 'check_dataset_generator':
         check_dataset_generator()
     if action == 'check':
@@ -807,10 +845,11 @@ if __name__ == '__main__':
             fold=0,
             weights=args.weights,
             crops_dir='../output/classification_crop_test/' + detection_model,
-            output_dir='../output/classification_results_test/{}/{}{}'.format(detection_model, args.fold, suffix),
+            output_dir='../output/classification_results_test/{}/{}/{}{}'.format(detection_model, classification_model, args.fold, suffix),
             video_ids=sorted(dataset.video_clips_test().keys()),
             hflip=args.hflip,
-            vflip=args.vflip
+            vflip=args.vflip,
+            model_type=classification_model
         )
 
     if action == 'save_detection_results':
@@ -822,5 +861,5 @@ if __name__ == '__main__':
                                output_dir='../output/detection_results_test/' + detection_model)
 
     if action == 'combine_results_test':
-        combine_test_results(classification_results_dir='../output/classification_results_test/' + detection_model,
-                             output_dir='../output/classification_results_test_combined/' + detection_model)
+        combine_test_results(classification_results_dir='../output/classification_results_test/{}/{}'.format(detection_model, classification_model),
+                             output_dir='../output/classification_results_test_combined/{}/{}'.format(detection_model, classification_model))
