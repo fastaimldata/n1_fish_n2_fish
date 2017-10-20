@@ -25,7 +25,7 @@ def load_key_frames(sequence_res_dir='../output/sequence_results_test'):
 
     steps_before = 8
     steps_after = 8
-    peak_threashold = 0.17
+    peak_threashold = 0.18
 
     res = {}
     for i, video_id in enumerate(video_ids):
@@ -95,12 +95,17 @@ def prepare_submission():
 
         print('load classifications:')
         classifications = {}
+        cls_models = [
+                ('densenet', 0.45, '../output/classification_results_test_combined/{}/{}_categories.csv'),
+                ('resnet50', 0.55, '../output/classification_results_test_combined/{}/resnet50/{}_categories.csv'),
+        ]
         for video_id in orig_submission.video_id.unique():
             cls_res = np.zeros((MAX_ROWS, len(CLS_COLS)), dtype=np.float32)
-            for cls_id in ['resnet_53', 'resnet_62']:
-                df = pd.read_csv('../output/classification_results_test_combined/{}/resnet50/{}_categories.csv'.format(cls_id, video_id))
-                df_full = pd.DataFrame({'frame': range(MAX_ROWS)})
-                cls_res += df_full.merge(df, on='frame', how='left').fillna(0.0).as_matrix(columns=CLS_COLS) * 0.5
+            for det_id in ['resnet_53', 'resnet_62']:
+                for cls_model_name, cls_model_weight, fn_mask in cls_models:
+                    df = pd.read_csv(fn_mask.format(det_id, video_id))
+                    df_full = pd.DataFrame({'frame': range(MAX_ROWS)})
+                    cls_res += df_full.merge(df, on='frame', how='left').fillna(0.0).as_matrix(columns=CLS_COLS) * 0.5 * cls_model_weight
             classifications[video_id] = cls_res
 
         print('load fish numbers:')
@@ -147,7 +152,7 @@ def prepare_submission():
     for species_idx, species in enumerate(SPECIES_COLS):
         orig_submission[species] = orig_submission_array[:, SPECIES_START_IDX+species_idx].astype(np.float32)
 
-    orig_submission.to_csv('../output/submission9.csv', index=False, float_format='%.8f')
+    orig_submission.to_csv('../output/submission10.csv', index=False, float_format='%.8f')
 
 
 if __name__ == '__main__':
