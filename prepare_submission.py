@@ -76,6 +76,44 @@ def test_key_frames_to_frame_numbers():
     assert_array_equal(key_frames_to_frame_numbers([0, 4, 8], res_size=10), np.array([1, 1, 2, 2, 2, 2, 3, 3, 3, 3]))
 
 
+FRAME_IDX = 1
+VIDEO_ID_IDX = 2
+FISH_NUMBER_IDX = 3
+LENGTH_IDX = 4
+SPECIES_START_IDX = 5
+
+
+def combine_group_species(orig_submission_array: np.ndarray):
+    fish_num = orig_submission_array[0, FISH_NUMBER_IDX]
+    fish_start_row = 0
+    for res_row in range(orig_submission_array.shape[0]):
+        row = orig_submission_array[res_row]
+
+        if row[FISH_NUMBER_IDX] != fish_num:
+            fish_end_row = res_row
+
+            fish_rows = orig_submission_array[fish_start_row:fish_end_row, :]
+            fish_prob = np.sum(fish_rows[:, SPECIES_START_IDX:], axis=1)
+            max_prob_fish = np.max(fish_prob)
+
+            fish_prob_clip = fish_prob.copy()
+            fish_prob_clip[fish_prob_clip < max_prob_fish * 0.75] = 0.0
+            fish_rows_weights = fish_prob_clip ** 2
+            fish_rows_weights /= np.sum(fish_rows_weights)
+
+            species = np.average(fish_rows[:, SPECIES_START_IDX:],
+                                 weights=fish_rows_weights,
+                                 axis=0)
+            species /= np.sum(species)
+            updated_probs = np.outer(fish_prob, species)
+            orig_submission_array[fish_start_row:fish_end_row, SPECIES_START_IDX:] = updated_probs
+
+            fish_start_row = res_row
+            fish_num = row[FISH_NUMBER_IDX]
+    return orig_submission_array
+
+
+
 def prepare_submission():
     orig_submission = pd.read_csv('../input/submission_format_zeros.csv')
     key_frames = load_key_frames()
@@ -120,12 +158,6 @@ def prepare_submission():
     for video_id in orig_submission.video_id.unique():
         transforms[video_id] = detection_ds.transform_for_clip(video_id)
 
-    FRAME_IDX = 1
-    VIDEO_ID_IDX = 2
-    FISH_NUMBER_IDX = 3
-    LENGTH_IDX = 4
-    SPECIES_START_IDX = 5
-
     orig_submission_array = orig_submission.as_matrix()
     for res_row in range(orig_submission_array.shape[0]):
         row = orig_submission_array[res_row]
@@ -147,12 +179,13 @@ def prepare_submission():
         orig_submission_array[res_row, SPECIES_START_IDX:] = cls[:len(SPECIES_COLS)] * (
             0.595 + 0.4 * clear_conf)
 
+    orig_submission_array = combine_group_species(orig_submission_array)
     orig_submission['fish_number'] = orig_submission_array[:, FISH_NUMBER_IDX].astype(np.float32)
     orig_submission['length'] = orig_submission_array[:, LENGTH_IDX].astype(np.float32)
     for species_idx, species in enumerate(SPECIES_COLS):
         orig_submission[species] = orig_submission_array[:, SPECIES_START_IDX+species_idx].astype(np.float32)
 
-    orig_submission.to_csv('../output/submission10.csv', index=False, float_format='%.8f')
+    orig_submission.to_csv('../output/submission11.csv', index=False, float_format='%.8f')
 
 
 if __name__ == '__main__':
