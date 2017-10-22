@@ -172,7 +172,7 @@ def prepare_submission():
         w = detections[video_id][frame]
         vector_global = transforms[video_id](np.array([[0, 0], [w, 0]]))
         length = np.linalg.norm(vector_global[0] - vector_global[1])
-        orig_submission_array[res_row, LENGTH_IDX] = length * 1.05
+        orig_submission_array[res_row, LENGTH_IDX] = length / 1.05
 
         cls = classifications[video_id][frame]
         clear_conf = cls[-1]
@@ -185,7 +185,7 @@ def prepare_submission():
     for species_idx, species in enumerate(SPECIES_COLS):
         orig_submission[species] = orig_submission_array[:, SPECIES_START_IDX+species_idx].astype(np.float32)
 
-    orig_submission.to_csv('../output/submission13.csv', index=False, float_format='%.8f')
+    orig_submission.to_csv('../output/submission14.csv', index=False, float_format='%.8f')
 
 
 if __name__ == '__main__':
