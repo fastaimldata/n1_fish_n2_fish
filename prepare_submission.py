@@ -177,7 +177,7 @@ def prepare_submission():
         cls = classifications[video_id][frame]
         clear_conf = cls[-1]
         orig_submission_array[res_row, SPECIES_START_IDX:] = cls[:len(SPECIES_COLS)] * (
-            0.595 + 0.4 * clear_conf)
+            0.4 + 0.6 * clear_conf)
 
     orig_submission_array = combine_group_species(orig_submission_array)
     orig_submission['fish_number'] = orig_submission_array[:, FISH_NUMBER_IDX].astype(np.float32)
@@ -185,7 +185,7 @@ def prepare_submission():
     for species_idx, species in enumerate(SPECIES_COLS):
         orig_submission[species] = orig_submission_array[:, SPECIES_START_IDX+species_idx].astype(np.float32)
 
-    orig_submission.to_csv('../output/submission11.csv', index=False, float_format='%.8f')
+    orig_submission.to_csv('../output/submission12.csv', index=False, float_format='%.8f')
 
 
 if __name__ == '__main__':
