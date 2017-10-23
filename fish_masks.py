@@ -12,12 +12,14 @@ from multiprocessing.pool import ThreadPool
 import matplotlib.pyplot as plt
 import scipy.misc
 import sklearn
+import sklearn.model_selection
 from keras.callbacks import ModelCheckpoint, TensorBoard, LearningRateScheduler
 from keras.layers import Conv2D, MaxPooling2D, ZeroPadding2D
 from keras.layers import Input, Activation, BatchNormalization, UpSampling2D
 from keras.layers.merge import concatenate
 from keras.models import Model
 from keras.optimizers import Adam
+from keras.applications.imagenet_utils import preprocess_input as preprocess_input_imagenet
 import img_augmentation
 import utils
 
@@ -79,11 +81,11 @@ def model_unet(input_shape=INPUT_SHAPE):
 
 
 def preprocess_input(x):
-    return x.astype(np.float32) / 128.0 - 1.0
+    return preprocess_input_imagenet(np.expand_dims(x, axis=0))[0]
 
 
 def unprocess_input(x):
-    return ((x + 1.0) * 128.0).astype(np.uint8)
+    return utils.preprocessed_input_to_img_resnet(x)
 
 
 class SampleCfg:
@@ -261,7 +263,7 @@ def train_unet(continue_from_epoch=-1, weights='', batch_size=8):
     model = model_unet(INPUT_SHAPE)
     model.summary()
 
-    model_name = 'model_fish_unet1'
+    model_name = 'model_fish_unet2'
     checkpoints_dir = '../output/checkpoints/fish_mask_unet/' + model_name
     tensorboard_dir = '../output/tensorboard/fish_mask_unet/' + model_name
     os.makedirs(checkpoints_dir, exist_ok=True)
@@ -311,14 +313,20 @@ def check_unet(weights):
     model.load_weights(weights)
     batch_size = 16
 
-    for batch_x, batch_y in dataset.generate(batch_size=batch_size):
+    for batch_x, batch_y in dataset.generate_validation(batch_size=batch_size):
         print(batch_x.shape, batch_y.shape)
         with utils.timeit_context('predict 16 images'):
             prediction = model.predict_on_batch(batch_x)
 
         for i in range(batch_size):
-            plt.imshow(unprocess_input(batch_x[i]))
-            plt.imshow(prediction[i, :, :, 0], alpha=0.75)
+            # plt.imshow(unprocess_input(batch_x[i]))
+            # plt.imshow(prediction[i, :, :, 0], alpha=0.75)
+            img = unprocess_input(batch_x[i]).astype(np.float32)
+            mask = prediction[i, :, :, 0]
+            img[:, :, 0] *= mask
+            img[:, :, 1] *= mask
+            img[:, :, 2] *= mask
+            plt.imshow(img / 255.0)
             plt.show()
 
 
