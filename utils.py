@@ -129,7 +129,7 @@ def lock_layers_until(model, first_trainable_layer, verbose=False):
 
 def get_image_crop(full_rgb, rect, scale_rect_x=1.0, scale_rect_y=1.0,
                    shift_x_ratio=0.0, shift_y_ratio=0.0,
-                   angle=0.0, out_size=299):
+                   angle=0.0, out_size=299, order=3):
     center_x = rect.x + rect.w / 2
     center_y = rect.y + rect.h / 2
     size = int(max(rect.w, rect.h))
@@ -148,7 +148,7 @@ def get_image_crop(full_rgb, rect, scale_rect_x=1.0, scale_rect_y=1.0,
     tform = AffineTransform(rotation=angle * math.pi / 180) + tform
     tform = AffineTransform(scale=(1 / scale_x, 1 / scale_y)) + tform
     tform = AffineTransform(translation=(-out_center, -out_center)) + tform
-    return skimage.transform.warp(full_rgb, tform, mode='edge', order=3, output_shape=(out_size, out_size))
+    return skimage.transform.warp(full_rgb, tform, mode='edge', order=order, output_shape=(out_size, out_size))
 
 
 def crop_zero_pad(img, x, y, w, h):

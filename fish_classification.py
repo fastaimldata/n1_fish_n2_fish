@@ -797,6 +797,26 @@ def combine_test_results(classification_results_dir, output_dir):
         res_df.to_csv(os.path.join(output_dir, video_id + '_categories.csv'), index=False, float_format='%.4f')
 
 
+def save_crops_from_dataset():
+    dataset = ClassificationDataset(fold=1)
+    dataset.test_data = dataset.test_data + dataset.train_data
+    random.shuffle(dataset.test_data)
+
+    batch_size = 1
+    img_num = 0
+    for x_batch, y_batch in dataset.generate_test(batch_size=batch_size, skip_pp=True, verbose=False):
+        # print(y_batch)
+        res_dir = '../output/fish_masks_train/{:02}/'.format(img_num // 100)
+        res_fn = '{:03}.jpg'.format(img_num % 100)
+        img_num += 1
+        if img_num > 10000:
+            break
+
+        os.makedirs(res_dir, exist_ok=True)
+        Image.fromarray(x_batch[0].astype(np.uint8)).save(res_dir+res_fn, format='JPEG', subsampling=0, quality=100)
+        # scipy.misc.imsave(, )
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='ruler masks')
     parser.add_argument('action', type=str, default='combine_results_test')
@@ -819,6 +839,8 @@ if __name__ == '__main__':
         check_dataset_generator()
     if action == 'check':
         check(fold=args.fold, weights=args.weights)
+    if action == 'save_crops_from_dataset':
+        save_crops_from_dataset()
     if action == 'generate_train_classification_crops':
         generate_crops_from_detection_results(crops_dir=dataset.RULER_CROPS_DIR,
                                               detection_results_dir='../output/predictions_ssd_roi2/' + detection_model,
