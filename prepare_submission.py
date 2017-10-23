@@ -25,7 +25,7 @@ def load_key_frames(sequence_res_dir='../output/sequence_results_test'):
 
     steps_before = 8
     steps_after = 8
-    peak_threashold = 0.18
+    peak_threashold = 0.17
 
     res = {}
     for i, video_id in enumerate(video_ids):
@@ -134,8 +134,8 @@ def prepare_submission():
         print('load classifications:')
         classifications = {}
         cls_models = [
-                ('densenet', 0.45, '../output/classification_results_test_combined/{}/{}_categories.csv'),
-                ('resnet50', 0.55, '../output/classification_results_test_combined/{}/resnet50/{}_categories.csv'),
+                ('densenet', 0.25, '../output/classification_results_test_combined/{}/{}_categories.csv'),
+                ('resnet50', 0.75, '../output/classification_results_test_combined/{}/resnet50/{}_categories.csv'),
         ]
         for video_id in orig_submission.video_id.unique():
             cls_res = np.zeros((MAX_ROWS, len(CLS_COLS)), dtype=np.float32)
@@ -172,7 +172,7 @@ def prepare_submission():
         w = detections[video_id][frame]
         vector_global = transforms[video_id](np.array([[0, 0], [w, 0]]))
         length = np.linalg.norm(vector_global[0] - vector_global[1])
-        orig_submission_array[res_row, LENGTH_IDX] = length / 1.05
+        orig_submission_array[res_row, LENGTH_IDX] = length
 
         cls = classifications[video_id][frame]
         clear_conf = cls[-1]
@@ -185,7 +185,7 @@ def prepare_submission():
     for species_idx, species in enumerate(SPECIES_COLS):
         orig_submission[species] = orig_submission_array[:, SPECIES_START_IDX+species_idx].astype(np.float32)
 
-    orig_submission.to_csv('../output/submission14.csv', index=False, float_format='%.8f')
+    orig_submission.to_csv('../output/submission15.csv', index=False, float_format='%.8f')
 
 
 if __name__ == '__main__':
