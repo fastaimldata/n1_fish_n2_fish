@@ -321,12 +321,17 @@ def check_unet(weights):
         for i in range(batch_size):
             # plt.imshow(unprocess_input(batch_x[i]))
             # plt.imshow(prediction[i, :, :, 0], alpha=0.75)
-            img = unprocess_input(batch_x[i]).astype(np.float32)
+            img = batch_x[i].astype(np.float32)
             mask = prediction[i, :, :, 0]
+
+            utils.print_stats('img', img)
+            utils.print_stats('mask', mask)
+
             img[:, :, 0] *= mask
             img[:, :, 1] *= mask
             img[:, :, 2] *= mask
-            plt.imshow(img / 255.0)
+            img = unprocess_input(img)
+            plt.imshow(img)
             plt.show()
 
 

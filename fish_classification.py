@@ -14,13 +14,14 @@ from scipy.misc import imread, imresize
 from keras.applications.imagenet_utils import preprocess_input
 from keras.optimizers import Adam, SGD
 from keras.callbacks import ModelCheckpoint, TensorBoard, LearningRateScheduler
-from keras.layers import Conv2D, MaxPooling2D, Dense
+from keras.layers import Conv2D, MaxPooling2D, Dense, GlobalAveragePooling2D
 from keras.layers import Input, Activation, BatchNormalization, UpSampling2D
-from keras.layers.merge import concatenate
+from keras.layers.merge import concatenate, multiply
 from keras.models import Model
 from keras.optimizers import Adam
 from keras.utils import to_categorical
 from keras.applications import ResNet50
+import keras.backend
 
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -42,6 +43,7 @@ import fish_detection
 
 import densenet161
 import densenet121
+from fish_masks import model_unet
 
 EXTRA_LABELS_BASE_DIR = '../output/ruler_crops_batch_labeled'
 EXTRA_LABELS_BATCHES = ['0', '100', '400', '500']
@@ -96,6 +98,26 @@ def build_model_resnet50():
 
     return model
 
+
+def build_model_resnet50_with_mask():
+    img_input = Input(INPUT_SHAPE, name='data')
+    mask_model = model_unet(INPUT_SHAPE)
+    mask_model.load_weights('../output/checkpoints/fish_mask_unet/model_fish_unet2/checkpoint-best-064-0.0476.hdf5')
+
+    mask = mask_model(img_input)
+    mask3 = concatenate([mask, mask, mask], axis=3)
+    masked_image = multiply([img_input, mask3])
+
+    base_model = ResNet50(input_shape=INPUT_SHAPE, include_top=False, pooling='avg')
+    base_model_output = base_model(masked_image)
+    species_dense = Dense(len(SPECIES_CLASSES), activation='softmax', name='cat_species')(base_model_output)
+    cover_dense = Dense(len(COVER_CLASSES), activation='softmax', name='cat_cover')(base_model_output)
+
+    model = Model(inputs=img_input, outputs=[species_dense, cover_dense])
+    sgd = SGD(lr=1e-3, decay=1e-6, momentum=0.9, nesterov=True)
+    model.compile(optimizer=sgd, loss='categorical_crossentropy', metrics=['accuracy'])
+
+    return model
 
 
 def build_model_densenet_121():
@@ -485,7 +507,6 @@ def check_dataset_generator():
 
 
 def train(fold, continue_from_epoch=0, weights='', batch_size=8, model_type='densenet'):
-    dataset = ClassificationDataset(fold=fold)
 
     if model_type == 'densenet':
         model = build_model_densenet_161()
@@ -497,12 +518,18 @@ def train(fold, continue_from_epoch=0, weights='', batch_size=8, model_type='den
         model_name = 'model_resnet50_cat'
         lock_layer1 = 'activation_49'
         lock_layer2 = 'activation_40'
+    elif model_type == 'resnet50_mask':
+        model = build_model_resnet50_with_mask()
+        model_name = 'model_resnet50_mask'
+        lock_layer1 = 'cat_species'
+        lock_layer2 = 'resnet50'
     else:
         print('Invalid model_type', model_type)
         return
 
     model.summary()
 
+    dataset = ClassificationDataset(fold=fold)
     checkpoints_dir = '../output/checkpoints/classification/{}_fold_{}'.format(model_name, fold)
     tensorboard_dir = '../output/tensorboard/classification/{}_fold_{}'.format(model_name, fold)
     os.makedirs(checkpoints_dir, exist_ok=True)
@@ -547,7 +574,7 @@ def train(fold, continue_from_epoch=0, weights='', batch_size=8, model_type='den
     utils.lock_layers_until(model, lock_layer2)
     model.summary()
 
-    nb_epoch = 10
+    nb_epoch = 20
     model.fit_generator(dataset.generate(batch_size=batch_size),
                         steps_per_epoch=dataset.train_batches(batch_size),
                         epochs=nb_epoch,
@@ -702,6 +729,8 @@ def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, outp
         model = build_model_densenet_161()
     elif model_type == 'resnet50':
         model = build_model_resnet50()
+    elif model_type == 'resnet50_mask':
+        model = build_model_resnet50_with_mask()
     else:
         print('Invalid model_type', model_type)
         return
