@@ -20,7 +20,8 @@ from keras.layers.merge import concatenate, multiply
 from keras.models import Model
 from keras.optimizers import Adam
 from keras.utils import to_categorical
-from keras.applications import ResNet50
+from keras.applications import ResNet50, Xception
+from keras.applications.xception import preprocess_input as preprocess_input_xception
 import keras.backend
 
 import matplotlib.pyplot as plt
@@ -88,6 +89,20 @@ def build_model_densenet_161():
 def build_model_resnet50():
     img_input = Input(INPUT_SHAPE, name='data')
     base_model = ResNet50(input_tensor=img_input, include_top=False, pooling='avg')
+
+    species_dense = Dense(len(SPECIES_CLASSES), activation='softmax', name='cat_species')(base_model.layers[-1].output)
+    cover_dense = Dense(len(COVER_CLASSES), activation='softmax', name='cat_cover')(base_model.layers[-1].output)
+
+    model = Model(input=img_input, outputs=[species_dense, cover_dense])
+    sgd = SGD(lr=1e-3, decay=1e-6, momentum=0.9, nesterov=True)
+    model.compile(optimizer=sgd, loss='categorical_crossentropy', metrics=['accuracy'])
+
+    return model
+
+
+def build_model_xception():
+    img_input = Input(INPUT_SHAPE, name='data')
+    base_model = Xception(input_tensor=img_input, include_top=False, pooling='avg')
 
     species_dense = Dense(len(SPECIES_CLASSES), activation='softmax', name='cat_species')(base_model.layers[-1].output)
     cover_dense = Dense(len(COVER_CLASSES), activation='softmax', name='cat_cover')(base_model.layers[-1].output)
@@ -508,6 +523,8 @@ def check_dataset_generator():
 
 def train(fold, continue_from_epoch=0, weights='', batch_size=8, model_type='densenet'):
 
+    preprocess_input_func = preprocess_input
+
     if model_type == 'densenet':
         model = build_model_densenet_161()
         model_name = 'model_densenet161_ds3'
@@ -518,6 +535,12 @@ def train(fold, continue_from_epoch=0, weights='', batch_size=8, model_type='den
         model_name = 'model_resnet50_cat'
         lock_layer1 = 'activation_49'
         lock_layer2 = 'activation_40'
+    elif model_type == 'xception':
+        model = build_model_xception()
+        model_name = 'model_xception'
+        lock_layer1 = 'block14_sepconv2_act'
+        lock_layer2 = 'block14_sepconv1'
+        preprocess_input_func = preprocess_input_xception
     elif model_type == 'resnet50_mask':
         model = build_model_resnet50_with_mask()
         model_name = 'model_resnet50_mask'
@@ -529,7 +552,7 @@ def train(fold, continue_from_epoch=0, weights='', batch_size=8, model_type='den
 
     model.summary()
 
-    dataset = ClassificationDataset(fold=fold)
+    dataset = ClassificationDataset(fold=fold, preprocess_input=preprocess_input_func)
     checkpoints_dir = '../output/checkpoints/classification/{}_fold_{}'.format(model_name, fold)
     tensorboard_dir = '../output/tensorboard/classification/{}_fold_{}'.format(model_name, fold)
     os.makedirs(checkpoints_dir, exist_ok=True)
@@ -725,12 +748,18 @@ def save_detection_results(detection_results_dir, output_dir):
 
 def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, output_dir, video_ids=None,
                                                   hflip=0, vflip=0, model_type=''):
+
+    preprocess_input_func = preprocess_input
+
     if model_type == 'densenet':
         model = build_model_densenet_161()
     elif model_type == 'resnet50':
         model = build_model_resnet50()
     elif model_type == 'resnet50_mask':
         model = build_model_resnet50_with_mask()
+    elif model_type == 'xception':
+        model = build_model_xception()
+        preprocess_input_func = preprocess_input_xception
     else:
         print('Invalid model_type', model_type)
         return
@@ -766,7 +795,7 @@ def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, outp
                     img = img.astype(np.float32)  # * 255.0
                     res.append(img)
                 res = np.array(res)
-                yield preprocess_input(res)
+                yield preprocess_input_func(res)
 
         results_species = []
         results_cover = []
