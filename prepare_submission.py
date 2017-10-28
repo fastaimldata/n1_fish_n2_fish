@@ -6,6 +6,8 @@ import os
 import os.path
 import pickle
 import matplotlib.pyplot as plt
+import sys
+
 import dataset
 import utils
 import fish_detection
@@ -134,10 +136,11 @@ def prepare_submission():
         print('load classifications:')
         classifications = {}
         cls_models = [
-            ('densenet', 0.18, '../output/classification_results_test_combined/{}/{}_categories.csv'),
-            ('resnet50', 0.32, '../output/classification_results_test_combined/{}/resnet50/{}_categories.csv'),
-            ('resnet50_mask', 0.32, '../output/classification_results_test_combined/{}/resnet50_mask/{}_categories.csv'),
-            ('xception', 0.18, '../output/classification_results_test_combined/{}/xception/{}_categories.csv'),
+            ('densenet', 0.18*0.1, '../output/classification_results_test_combined/{}/densenet/{}_categories.csv'),
+            ('resnet50', 0.32*0.1, '../output/classification_results_test_combined/{}/resnet50/{}_categories.csv'),
+            ('resnet50_mask', 0.32*0.1, '../output/classification_results_test_combined/{}/resnet50_mask/{}_categories.csv'),
+            ('xception', 0.18*0.1, '../output/classification_results_test_combined/{}/xception/{}_categories.csv'),
+            ('inception', 0.9, '../output/classification_results_test_combined/{}/inception/{}_categories.csv'),
         ]
         for video_id in orig_submission.video_id.unique():
             cls_res = np.zeros((MAX_ROWS, len(CLS_COLS)), dtype=np.float32)
@@ -187,8 +190,18 @@ def prepare_submission():
     for species_idx, species in enumerate(SPECIES_COLS):
         orig_submission[species] = orig_submission_array[:, SPECIES_START_IDX+species_idx].astype(np.float32)
 
-    orig_submission.to_csv('../output/submission21.csv', index=False, float_format='%.8f')
+    orig_submission.to_csv('../output/submission22.csv', index=False, float_format='%.8f')
+
+
+def check_corr(sub1, sub2):
+    print(sub1, sub2)
+    s1 = pd.read_csv('../output/' + sub1)
+    s2 = pd.read_csv('../output/' + sub2)
+    for col in 'fish_number,length,species_fourspot,species_grey sole,species_other,species_plaice,species_summer,species_windowpane,species_winter'.split(','):
+        print(col, s1[col].corr(s2[col]))
 
 
 if __name__ == '__main__':
-    prepare_submission()
+    check_corr('submission{}.csv'.format(sys.argv[1]), 'submission{}.csv'.format(sys.argv[2]))
+    # prepare_submission()
+

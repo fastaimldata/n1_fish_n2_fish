@@ -778,9 +778,14 @@ def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, outp
         model = build_model_resnet50()
     elif model_type == 'resnet50_mask':
         model = build_model_resnet50_with_mask()
-    elif model_type == 'xception':
+    elif model_type == 'resnet50_mask5':
+        model = build_model_resnet50_with_mask()
+    elif model_type in ('xception', 'xception5'):
         model = build_model_xception()
         preprocess_input_func = preprocess_input_xception
+    elif model_type == 'inception':
+        model = build_model_inception()
+        preprocess_input_func = preprocess_input_inception
     else:
         print('Invalid model_type', model_type)
         return
