@@ -20,8 +20,9 @@ from keras.layers.merge import concatenate, multiply
 from keras.models import Model
 from keras.optimizers import Adam
 from keras.utils import to_categorical
-from keras.applications import ResNet50, Xception
+from keras.applications import ResNet50, Xception, InceptionV3
 from keras.applications.xception import preprocess_input as preprocess_input_xception
+from keras.applications.inception_v3 import preprocess_input as preprocess_input_inception
 import keras.backend
 
 import matplotlib.pyplot as plt
@@ -103,6 +104,20 @@ def build_model_resnet50():
 def build_model_xception():
     img_input = Input(INPUT_SHAPE, name='data')
     base_model = Xception(input_tensor=img_input, include_top=False, pooling='avg')
+
+    species_dense = Dense(len(SPECIES_CLASSES), activation='softmax', name='cat_species')(base_model.layers[-1].output)
+    cover_dense = Dense(len(COVER_CLASSES), activation='softmax', name='cat_cover')(base_model.layers[-1].output)
+
+    model = Model(input=img_input, outputs=[species_dense, cover_dense])
+    sgd = SGD(lr=1e-3, decay=1e-6, momentum=0.9, nesterov=True)
+    model.compile(optimizer=sgd, loss='categorical_crossentropy', metrics=['accuracy'])
+
+    return model
+
+
+def build_model_inception():
+    img_input = Input(INPUT_SHAPE, name='data')
+    base_model = InceptionV3(input_tensor=img_input, include_top=False, pooling='avg')
 
     species_dense = Dense(len(SPECIES_CLASSES), activation='softmax', name='cat_species')(base_model.layers[-1].output)
     cover_dense = Dense(len(COVER_CLASSES), activation='softmax', name='cat_cover')(base_model.layers[-1].output)
@@ -541,6 +556,12 @@ def train(fold, continue_from_epoch=0, weights='', batch_size=8, model_type='den
         lock_layer1 = 'block14_sepconv2_act'
         lock_layer2 = 'block14_sepconv1'
         preprocess_input_func = preprocess_input_xception
+    elif model_type == 'inception':
+        model = build_model_inception()
+        model_name = 'model_inception'
+        lock_layer1 = 'mixed10'
+        lock_layer2 = 'mixed9'
+        preprocess_input_func = preprocess_input_xception
     elif model_type == 'resnet50_mask':
         model = build_model_resnet50_with_mask()
         model_name = 'model_resnet50_mask'
@@ -570,7 +591,7 @@ def train(fold, continue_from_epoch=0, weights='', batch_size=8, model_type='den
             return 1e-4
         if epoch < 20:
             return 5e-5
-        return 2e-5
+        return 1e-5
 
     validation_batch_size = 8
 
@@ -597,7 +618,7 @@ def train(fold, continue_from_epoch=0, weights='', batch_size=8, model_type='den
     utils.lock_layers_until(model, lock_layer2)
     model.summary()
 
-    nb_epoch = 20
+    nb_epoch = 26
     model.fit_generator(dataset.generate(batch_size=batch_size),
                         steps_per_epoch=dataset.train_batches(batch_size),
                         epochs=nb_epoch,
