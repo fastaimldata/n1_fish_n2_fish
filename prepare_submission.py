@@ -134,10 +134,10 @@ def prepare_submission():
         print('load classifications:')
         classifications = {}
         cls_models = [
-            # ('densenet', 0.2, '../output/classification_results_test_combined/{}/{}_categories.csv'),
-            ('resnet50', 0.1, '../output/classification_results_test_combined/{}/resnet50/{}_categories.csv'),
-            # ('resnet50_mask', 0.4, '../output/classification_results_test_combined/{}/resnet50_mask/{}_categories.csv'),
-            ('xception', 0.9, '../output/classification_results_test_combined/{}/xception/{}_categories.csv'),
+            ('densenet', 0.18, '../output/classification_results_test_combined/{}/{}_categories.csv'),
+            ('resnet50', 0.32, '../output/classification_results_test_combined/{}/resnet50/{}_categories.csv'),
+            ('resnet50_mask', 0.32, '../output/classification_results_test_combined/{}/resnet50_mask/{}_categories.csv'),
+            ('xception', 0.18, '../output/classification_results_test_combined/{}/xception/{}_categories.csv'),
         ]
         for video_id in orig_submission.video_id.unique():
             cls_res = np.zeros((MAX_ROWS, len(CLS_COLS)), dtype=np.float32)
@@ -187,7 +187,7 @@ def prepare_submission():
     for species_idx, species in enumerate(SPECIES_COLS):
         orig_submission[species] = orig_submission_array[:, SPECIES_START_IDX+species_idx].astype(np.float32)
 
-    orig_submission.to_csv('../output/submission20.csv', index=False, float_format='%.8f')
+    orig_submission.to_csv('../output/submission21.csv', index=False, float_format='%.8f')
 
 
 if __name__ == '__main__':
