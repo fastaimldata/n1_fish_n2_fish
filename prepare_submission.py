@@ -136,12 +136,17 @@ def prepare_submission():
         print('load classifications:')
         classifications = {}
         cls_models = [
-            ('densenet', 0.18*0.1),
-            ('resnet50', 0.32*0.1),
-            ('resnet50_mask', 0.32*0.1),
-            ('xception', 0.18*0.1),
-            ('resnet50_mask5', 0.9),
+            ('inception', 0.46*0.2),
+            ('resnet50', 0.18*0.2),
+            ('resnet50_mask5', 0.18*0.2),
+            ('xception', 0.18*0.2),
+            ('densenet2', 0.8),
         ]
+
+        # cls_models = [
+        #     ('densenet2', 1.0),
+        # ]
+
         fn_mask = '../output/classification_results_test_combined/{}/{}/{}_categories.csv'
         for video_id in orig_submission.video_id.unique():
             cls_res = np.zeros((MAX_ROWS, len(CLS_COLS)), dtype=np.float32)
@@ -191,7 +196,7 @@ def prepare_submission():
     for species_idx, species in enumerate(SPECIES_COLS):
         orig_submission[species] = orig_submission_array[:, SPECIES_START_IDX+species_idx].astype(np.float32)
 
-    orig_submission.to_csv('../output/submission25.csv', index=False, float_format='%.8f')
+    orig_submission.to_csv('../output/submission26_densenet2.csv', index=False, float_format='%.8f')
 
 
 res_cols = ['fish_number', 'length',
@@ -212,6 +217,6 @@ def check_corr(sub1, sub2):
 
 
 if __name__ == '__main__':
-    # check_corr('submission{}.csv'.format(sys.argv[1]), 'submission{}.csv'.format(sys.argv[2]))
-    prepare_submission()
+    check_corr('submission{}.csv'.format(sys.argv[1]), 'submission{}.csv'.format(sys.argv[2]))
+    # prepare_submission()
 
