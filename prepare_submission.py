@@ -136,19 +136,20 @@ def prepare_submission():
         print('load classifications:')
         classifications = {}
         cls_models = [
-            ('densenet', 0.18*0.1, '../output/classification_results_test_combined/{}/densenet/{}_categories.csv'),
-            ('resnet50', 0.32*0.1, '../output/classification_results_test_combined/{}/resnet50/{}_categories.csv'),
-            ('resnet50_mask', 0.32*0.1, '../output/classification_results_test_combined/{}/resnet50_mask/{}_categories.csv'),
-            ('xception', 0.18*0.1, '../output/classification_results_test_combined/{}/xception/{}_categories.csv'),
-            ('inception', 0.9, '../output/classification_results_test_combined/{}/inception/{}_categories.csv'),
+            ('densenet', 0.18*0.1),
+            ('resnet50', 0.32*0.1),
+            ('resnet50_mask', 0.32*0.1),
+            ('xception', 0.18*0.1),
+            ('resnet50_mask5', 0.9),
         ]
+        fn_mask = '../output/classification_results_test_combined/{}/{}/{}_categories.csv'
         for video_id in orig_submission.video_id.unique():
             cls_res = np.zeros((MAX_ROWS, len(CLS_COLS)), dtype=np.float32)
-            for det_id in ['resnet_53', 'resnet_62']:
-                for cls_model_name, cls_model_weight, fn_mask in cls_models:
-                    df = pd.read_csv(fn_mask.format(det_id, video_id))
+            for det_id, det_weight in [('resnet_53', 0.5), ('resnet_62', 0.5)]:
+                for cls_model_name, cls_model_weight in cls_models:
+                    df = pd.read_csv(fn_mask.format(det_id, cls_model_name, video_id))
                     df_full = pd.DataFrame({'frame': range(MAX_ROWS)})
-                    cls_res += df_full.merge(df, on='frame', how='left').fillna(0.0).as_matrix(columns=CLS_COLS) * 0.5 * cls_model_weight
+                    cls_res += df_full.merge(df, on='frame', how='left').fillna(0.0).as_matrix(columns=CLS_COLS) * det_weight * cls_model_weight
             classifications[video_id] = cls_res
 
         print('load fish numbers:')
@@ -190,18 +191,27 @@ def prepare_submission():
     for species_idx, species in enumerate(SPECIES_COLS):
         orig_submission[species] = orig_submission_array[:, SPECIES_START_IDX+species_idx].astype(np.float32)
 
-    orig_submission.to_csv('../output/submission22.csv', index=False, float_format='%.8f')
+    orig_submission.to_csv('../output/submission25.csv', index=False, float_format='%.8f')
+
+
+res_cols = ['fish_number', 'length',
+            'species_fourspot', 'species_grey sole', 'species_other',
+            'species_plaice', 'species_summer', 'species_windowpane', 'species_winter']
 
 
 def check_corr(sub1, sub2):
     print(sub1, sub2)
     s1 = pd.read_csv('../output/' + sub1)
     s2 = pd.read_csv('../output/' + sub2)
-    for col in 'fish_number,length,species_fourspot,species_grey sole,species_other,species_plaice,species_summer,species_windowpane,species_winter'.split(','):
+    for col in res_cols:
         print(col, s1[col].corr(s2[col]))
+
+    print('mean ', sub1, sub2, 'sub2-sub1')
+    for col in res_cols:
+        print('{:20}  {:.6} {:.6} {:.6}'.format(col, s1[col].mean(), s2[col].mean(), s2[col].mean() - s1[col].mean()))
 
 
 if __name__ == '__main__':
-    check_corr('submission{}.csv'.format(sys.argv[1]), 'submission{}.csv'.format(sys.argv[2]))
-    # prepare_submission()
+    # check_corr('submission{}.csv'.format(sys.argv[1]), 'submission{}.csv'.format(sys.argv[2]))
+    prepare_submission()
 
