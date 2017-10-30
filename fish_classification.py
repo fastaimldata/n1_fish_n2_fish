@@ -177,6 +177,33 @@ def build_model_densenet_with_mask():
     return model
 
 
+def build_model_densenet121_with_mask():
+    img_input = Input(INPUT_SHAPE, name='data')
+    mask_model = model_unet(INPUT_SHAPE)
+    mask_model.load_weights('../output/checkpoints/fish_mask_unet/model_fish_unet2/checkpoint-best-064-0.0476.hdf5')
+
+    mask = mask_model(img_input)
+    mask3 = concatenate([mask, mask, mask], axis=3)
+    masked_image = multiply([img_input, mask3])
+
+    base_model = densenet121.DenseNet(
+        img_input=img_input,
+        reduction=0.5,
+        weights_path='../input/densenet121_weights_tf.h5',
+        classes=1000)
+    base_model.layers.pop()
+    base_model.layers.pop()
+    base_model_output = base_model(masked_image)
+    species_dense = Dense(len(SPECIES_CLASSES), activation='softmax', name='cat_species')(base_model_output)
+    cover_dense = Dense(len(COVER_CLASSES), activation='softmax', name='cat_cover')(base_model_output)
+
+    model = Model(inputs=img_input, outputs=[species_dense, cover_dense])
+    sgd = SGD(lr=1e-3, decay=1e-6, momentum=0.9, nesterov=True)
+    model.compile(optimizer=sgd, loss='categorical_crossentropy', metrics=['accuracy'])
+
+    return model
+
+
 def build_model_densenet_121():
     img_input = Input(INPUT_SHAPE, name='data')
     base_model = densenet121.DenseNet(
@@ -572,6 +599,16 @@ def train(fold, continue_from_epoch=0, weights='', batch_size=8, model_type='den
         model_name = 'model_densenet161_ds3'
         lock_layer1 = 'pool5'
         lock_layer2 = 'pool4'
+    elif model_type == 'densenet121':
+        model = build_model_densenet_121()
+        model_name = 'model_densenet121'
+        lock_layer1 = 'pool5'
+        lock_layer2 = 'pool4'
+    elif model_type == 'densenet121_mask':
+        model = build_model_densenet121_with_mask()
+        model_name = 'model_densenet121_mask'
+        lock_layer1 = 'cat_species'
+        lock_layer2 = 'densenet'
     elif model_type == 'densenet2':
         model = build_model_densenet_161()
         model_name = 'model_densenet161_ds3'
@@ -806,6 +843,8 @@ def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, outp
 
     if model_type in ('densenet', 'densenet2'):
         model = build_model_densenet_161()
+    elif model_type in ('densenet121',):
+        model = build_model_densenet_121()
     elif model_type == 'resnet50':
         model = build_model_resnet50()
     elif model_type == 'resnet50_mask':

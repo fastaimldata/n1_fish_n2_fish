@@ -136,11 +136,11 @@ def prepare_submission():
         print('load classifications:')
         classifications = {}
         cls_models = [
-            ('inception', 0.46*0.2),
-            ('resnet50', 0.18*0.2),
-            ('resnet50_mask5', 0.18*0.2),
-            ('xception', 0.18*0.2),
-            ('densenet2', 0.8),
+            ('inception', 0.66),
+            ('resnet50_mask5', 0.3 * 0.34),
+            ('resnet50', 0.25 * 0.34),
+            ('densenet2', 0.3 * 0.34),
+            ('xception5', 0.15 * 0.34),
         ]
 
         # cls_models = [
@@ -150,7 +150,7 @@ def prepare_submission():
         fn_mask = '../output/classification_results_test_combined/{}/{}/{}_categories.csv'
         for video_id in orig_submission.video_id.unique():
             cls_res = np.zeros((MAX_ROWS, len(CLS_COLS)), dtype=np.float32)
-            for det_id, det_weight in [('resnet_53', 0.5), ('resnet_62', 0.5)]:
+            for det_id, det_weight in [('resnet_53', 0.6), ('resnet_62', 0.4)]:
                 for cls_model_name, cls_model_weight in cls_models:
                     df = pd.read_csv(fn_mask.format(det_id, cls_model_name, video_id))
                     df_full = pd.DataFrame({'frame': range(MAX_ROWS)})
@@ -196,7 +196,7 @@ def prepare_submission():
     for species_idx, species in enumerate(SPECIES_COLS):
         orig_submission[species] = orig_submission_array[:, SPECIES_START_IDX+species_idx].astype(np.float32)
 
-    orig_submission.to_csv('../output/submission26_densenet2.csv', index=False, float_format='%.8f')
+    orig_submission.to_csv('../output/submission27_combined2.csv', index=False, float_format='%.8f')
 
 
 res_cols = ['fish_number', 'length',
