@@ -8,7 +8,6 @@ from queue import Queue
 
 import skimage.io
 import skimage.transform
-import zstd
 from skimage.transform import SimilarityTransform, AffineTransform
 import numpy as np
 import matplotlib.pyplot as plt
@@ -84,24 +83,6 @@ def chunks(l, n):
     for i in range(0, len(l) // n * n + n - 1, n):
         if len(l[i:i + n]):
             yield l[i:i + n]
-
-
-def load_compressed_data(file_name):
-    with open(file_name, 'rb') as f:
-        compressed = f.read()
-
-    comp_ctx = zstd.ZstdDecompressor()
-    data = pickle.loads(comp_ctx.decompress(compressed))
-    del comp_ctx
-    return data
-
-
-def save_compressed_data(data, file_name):
-    comp_ctx = zstd.ZstdCompressor(write_content_size=True, level=6)
-    compressed = comp_ctx.compress(pickle.dumps(data, protocol=-1))
-    f = open(file_name, 'wb')
-    f.write(compressed)
-    f.close()
 
 
 def load_data(file_name):
