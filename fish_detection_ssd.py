@@ -539,8 +539,8 @@ def generate_predictions_on_train_clips(weights, suffix, from_idx, count, use_re
 
     items = list(sorted(dataset.video_clips.keys()))
 
-    pool = ThreadPool(processes=8)
-    # executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    pool = ThreadPool(processes=4)
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
     for video_id in items[from_idx: from_idx+count]:
         print(video_id)
@@ -565,14 +565,10 @@ def generate_predictions_on_train_clips(weights, suffix, from_idx, count, use_re
         if len(new_frames) == 0:
             continue
 
-        # for x_batch, used_frames in utils.parallel_generator(dataset.generate_x_for_train_video_id(video_id=video_id,
-        #                                                                   batch_size=batch_size,
-        #                                                                   frames=new_frames,
-        #                                                                   pool=pool), executor=executor):
-        for x_batch, used_frames in dataset.generate_x_for_train_video_id(video_id=video_id,
+        for x_batch, used_frames in utils.parallel_generator(dataset.generate_x_for_train_video_id(video_id=video_id,
                                                                           batch_size=batch_size,
                                                                           frames=new_frames,
-                                                                          pool=pool):
+                                                                          pool=pool), executor=executor):
             predictions = model.predict(x_batch)
             results = bbox_util.detection_out(predictions)
             for batch_id in range(predictions.shape[0]):
