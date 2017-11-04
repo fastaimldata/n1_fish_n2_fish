@@ -539,8 +539,6 @@ def generate_predictions_on_train_clips(weights, suffix, from_idx, count, use_re
 
     items = list(sorted(dataset.video_clips.keys()))
 
-    requested_frames = pickle.load(open('../output/used_frames.pkl', 'rb'))
-
     pool = ThreadPool(processes=4)
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
@@ -554,6 +552,7 @@ def generate_predictions_on_train_clips(weights, suffix, from_idx, count, use_re
         batch_size = 4
 
         if use_requested_frames:
+            requested_frames = pickle.load(open('../output/used_frames.pkl', 'rb'))
             frames = requested_frames[video_id]
         else:
             frames = list(range(len(dataset.video_clips[video_id])))
