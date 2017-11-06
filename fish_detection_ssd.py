@@ -417,7 +417,7 @@ def train_resnet():
                   optimizer=Adam(lr=3e-5))
     model.summary()
     # model.load_weights('../output/checkpoints/detect_ssd/ssd_resnet_720/checkpoint-best-018-0.2318.hdf5')
-    model.load_weights('../output/checkpoints/detect_ssd/ssd_resnet_720/checkpoint-best-053-0.1058.hdf5')
+    # model.load_weights('../output/checkpoints/detect_ssd/ssd_resnet_720/checkpoint-best-053-0.1058.hdf5')
 
     priors = priors_from_model(model)
     bbox_util = BBoxUtility(NUM_CLASSES, priors)
@@ -427,7 +427,7 @@ def train_resnet():
     batch_size = 8
     val_batch_size = 8
 
-    nb_epoch = 1000
+    nb_epoch = 100
 
     checkpoint_best = ModelCheckpoint(checkpoints_dir + "/checkpoint-best-{epoch:03d}-{val_loss:.4f}.hdf5",
                                       verbose=1,
@@ -436,9 +436,9 @@ def train_resnet():
     checkpoint_periodical = ModelCheckpoint(checkpoints_dir + "/checkpoint-{epoch:03d}-{val_loss:.4f}.hdf5",
                                             verbose=1,
                                             save_weights_only=False,
-                                            period=8)
+                                            period=2)
 
-    tensorboard = TensorBoard(tensorboard_dir, histogram_freq=4, write_graph=True, write_images=True)
+    tensorboard = TensorBoard(tensorboard_dir, histogram_freq=16, write_graph=False, write_images=False)
 
     model.fit_generator(dataset.generate_ssd(batch_size=batch_size, is_training=True),
                         steps_per_epoch=dataset.nb_train_samples // batch_size,
@@ -447,7 +447,7 @@ def train_resnet():
                         callbacks=[checkpoint_best, checkpoint_periodical, tensorboard],
                         validation_data=dataset.generate_ssd(batch_size=val_batch_size, is_training=False),
                         validation_steps=dataset.nb_test_samples // val_batch_size,
-                        initial_epoch=54)
+                        initial_epoch=0)
 
 
 def check(weights):
