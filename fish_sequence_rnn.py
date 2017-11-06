@@ -33,6 +33,7 @@ IMG_WITH = 720
 IMG_HEIGHT = 360
 
 DETECTION_MODELS = ['resnet_53', 'resnet_62']
+CLASSIFICATION_MODEL = 'densenet'
 
 NB_FEATURES = 17 * len(DETECTION_MODELS)
 NB_STEPS = 256
@@ -150,7 +151,7 @@ class Dataset:
                 ds_detection = pd.read_csv(
                     os.path.join(detection_results_dir, detection_model, video_id + '_ssd_detection.csv'))
                 ds_classification = pd.read_csv(
-                    os.path.join(classification_results_dir, detection_model, video_id + '_categories.csv'))
+                    os.path.join(classification_results_dir, detection_model, CLASSIFICATION_MODEL, video_id + '_categories.csv'))
                 # except FileNotFoundError:
                 #     continue
 
