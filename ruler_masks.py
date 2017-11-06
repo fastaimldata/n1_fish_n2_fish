@@ -354,7 +354,7 @@ def predict_masks_test():
                 for samples in utils.chunks(batch_input_samples, batch_size):
                     yield np.array(pool.map(process_sample, samples))
 
-        with utils.timeit_context('predict {} images, {}/{}, {:.1}%'.format(
+        with utils.timeit_context('predict {} images, {}/{}, {:.1f}%'.format(
                                   batch_size*save_batch_size, processed_samples, len(input_samples),
                                   100.0*processed_samples/len(input_samples))):
             predictions = model.predict_generator(generate_x(), steps=save_batch_size, verbose=1)
