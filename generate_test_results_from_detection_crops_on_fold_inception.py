@@ -12,7 +12,7 @@ weights = {
     4: '../output/checkpoints/classification/model_inception_fold_4/checkpoint-004-0.1513.hdf5'
 }
 
-flips = ['--hflip=1 --vflip=1']  # ['', '--hflip=1', '--vflip=1', '--hflip=1 --vflip=1']
+flips = ['', '--hflip=1', '--vflip=1', '--hflip=1 --vflip=1']
 
 detection_models = ['resnet_62', 'resnet_53']
 
