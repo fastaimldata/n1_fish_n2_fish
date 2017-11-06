@@ -135,33 +135,15 @@ def prepare_submission():
 
         print('load classifications:')
         classifications = {}
-# sub 28:
-#         >>> cls_models = [
-# ...             ('inception', 0.66 * 0.3),
-# ...             ('resnet50_mask5', 0.3 * 0.34 * 0.3),
-# ...             ('resnet50', 0.25 * 0.34 * 0.3),
-# ...             ('densenet2', 0.3 * 0.34 * 0.3),
-# ...             ('xception5', 0.15 * 0.34 * 0.3),
-# ...             ('densenet121', 0.7),
-# ...         ]
 
         cls_models = [
-            ('inception', 0.66),
-            ('resnet50_mask5', 0.3 * 0.34),
-            ('resnet50', 0.15 * 0.34),
-            ('densenet2', 0.2 * 0.34),
-            ('xception5', 0.15 * 0.34),
-            ('densenet121', 0.2 * 0.34),
+            ('inception', 1.0)
         ]
-
-        # cls_models = [
-        #     ('densenet2', 1.0),
-        # ]
 
         fn_mask = '../output/classification_results_test_combined/{}/{}/{}_categories.csv'
         for video_id in orig_submission.video_id.unique():
             cls_res = np.zeros((MAX_ROWS, len(CLS_COLS)), dtype=np.float32)
-            for det_id, det_weight in [('resnet_53', 0.6), ('resnet_62', 0.4)]:
+            for det_id, det_weight in [('resnet_53', 0.5), ('resnet_62', 0.5)]:
                 for cls_model_name, cls_model_weight in cls_models:
                     df = pd.read_csv(fn_mask.format(det_id, cls_model_name, video_id))
                     df_full = pd.DataFrame({'frame': range(MAX_ROWS)})
@@ -201,13 +183,13 @@ def prepare_submission():
         orig_submission_array[res_row, SPECIES_START_IDX:] = cls[:len(SPECIES_COLS)] * (
             0.5 + 0.5 * clear_conf)
 
-    # orig_submission_array = combine_group_species(orig_submission_array)
+    orig_submission_array = combine_group_species(orig_submission_array)
     orig_submission['fish_number'] = orig_submission_array[:, FISH_NUMBER_IDX].astype(np.float32)
     orig_submission['length'] = orig_submission_array[:, LENGTH_IDX].astype(np.float32)
     for species_idx, species in enumerate(SPECIES_COLS):
         orig_submission[species] = orig_submission_array[:, SPECIES_START_IDX+species_idx].astype(np.float32)
 
-    orig_submission.to_csv('../output/submission29_comb_no_group.csv', index=False, float_format='%.8f')
+    orig_submission.to_csv('../output/submission30_inception_only.csv', index=False, float_format='%.8f')
 
 
 res_cols = ['fish_number', 'length',
@@ -228,6 +210,6 @@ def check_corr(sub1, sub2):
 
 
 if __name__ == '__main__':
-    check_corr('submission{}.csv'.format(sys.argv[1]), 'submission{}.csv'.format(sys.argv[2]))
-    # prepare_submission()
+    # check_corr('submission{}.csv'.format(sys.argv[1]), 'submission{}.csv'.format(sys.argv[2]))
+    prepare_submission()
 
