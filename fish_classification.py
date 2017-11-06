@@ -932,11 +932,16 @@ def combine_test_results(classification_results_dir, output_dir):
 
     columns ='species__,species_fourspot,species_grey sole,species_other,species_plaice,species_summer,species_windowpane,species_winter,no fish,hand over fish,fish clear'.split(',')
 
+    fold_suffixes = ['', '_hflip', '_vflip', '_hflip_vflip']
+    # to match submission, RNN was trained on densent with only one hflip
+    if 'densenet' in classification_results_dir:
+        fold_suffixes = ['', '_hflip']
+
     for video_id in video_ids:
         data_frames = [
             pd.read_csv(os.path.join(classification_results_dir, str(fold)+fold_suffix, video_id+'_categories.csv'))
             for fold in range(1, 5)
-            for fold_suffix in ['', '_hflip', '_vflip', '_hflip_vflip']
+            for fold_suffix in fold_suffixes
         ]
 
         combined = pd.concat(data_frames)
