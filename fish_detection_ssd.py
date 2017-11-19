@@ -382,7 +382,7 @@ def train():
     batch_size = 8
     val_batch_size = 8
 
-    nb_epoch = 100
+    nb_epoch = 50
 
     checkpoint_best = ModelCheckpoint(checkpoints_dir + "/checkpoint-best-{epoch:03d}-{val_loss:.4f}.hdf5",
                                       verbose=1,
@@ -391,7 +391,7 @@ def train():
     checkpoint_periodical = ModelCheckpoint(checkpoints_dir + "/checkpoint-{epoch:03d}-{val_loss:.4f}.hdf5",
                                             verbose=1,
                                             save_weights_only=False,
-                                            period=4)
+                                            period=1)
 
     tensorboard = TensorBoard(tensorboard_dir, histogram_freq=4, write_graph=True, write_images=True)
 
@@ -402,7 +402,7 @@ def train():
                         callbacks=[checkpoint_best, checkpoint_periodical, tensorboard],
                         validation_data=dataset.generate_ssd(batch_size=val_batch_size, is_training=False),
                         validation_steps=dataset.nb_test_samples // val_batch_size,
-                        initial_epoch=20)
+                        initial_epoch=0)
 
 
 def train_resnet():
@@ -427,7 +427,7 @@ def train_resnet():
     batch_size = 8
     val_batch_size = 8
 
-    nb_epoch = 100
+    nb_epoch = 50
 
     checkpoint_best = ModelCheckpoint(checkpoints_dir + "/checkpoint-best-{epoch:03d}-{val_loss:.4f}.hdf5",
                                       verbose=1,
@@ -436,7 +436,7 @@ def train_resnet():
     checkpoint_periodical = ModelCheckpoint(checkpoints_dir + "/checkpoint-{epoch:03d}-{val_loss:.4f}.hdf5",
                                             verbose=1,
                                             save_weights_only=False,
-                                            period=2)
+                                            period=1)
 
     tensorboard = TensorBoard(tensorboard_dir, histogram_freq=16, write_graph=False, write_images=False)
 
