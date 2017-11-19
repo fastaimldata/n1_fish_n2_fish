@@ -205,7 +205,7 @@ def check_dataset():
 
 
 def train_unet(continue_from_epoch=-1, weights='', batch_size=8):
-    dataset = Dataset()
+    dataset = Dataset(update_cache=True)
 
     model = model_unet(INPUT_SHAPE)
     model.summary()
@@ -242,7 +242,7 @@ def train_unet(continue_from_epoch=-1, weights='', batch_size=8):
 
     lr_sched = LearningRateScheduler(schedule=cheduler)
 
-    nb_epoch = 400
+    nb_epoch = 24
     validation_batch_size = 4
     model.fit_generator(dataset.generate(batch_size=batch_size),
                         steps_per_epoch=60,
@@ -252,6 +252,7 @@ def train_unet(continue_from_epoch=-1, weights='', batch_size=8):
                         validation_data=dataset.generate_validation(batch_size=validation_batch_size),
                         validation_steps=len(dataset.test_idx)//validation_batch_size,
                         initial_epoch=continue_from_epoch + 1)
+    model.save_weights('../output/ruler_masks_unet.h5')
 
 
 def check_unet(weights):
@@ -272,7 +273,8 @@ def check_unet(weights):
 
 
 def predict_masks(fold):
-    weights = '../output/checkpoints/mask_unet/model_unet1/checkpoint-best-019-0.0089.hdf5'
+    # weights = '../output/checkpoints/mask_unet/model_unet1/checkpoint-best-019-0.0089.hdf5'
+    weights = '../output/ruler_masks_unet.h5'
     model = model_unet(INPUT_SHAPE)
     model.load_weights(weights)
     batch_size = 16
@@ -322,7 +324,8 @@ def predict_masks(fold):
 
 
 def predict_masks_test():
-    weights = '../output/checkpoints/mask_unet/model_unet1/checkpoint-best-019-0.0089.hdf5'
+    # weights = '../output/checkpoints/mask_unet/model_unet1/checkpoint-best-019-0.0089.hdf5'
+    weights = '../output/ruler_masks_unet.h5'
     model = model_unet(INPUT_SHAPE)
     model.load_weights(weights)
     batch_size = 16
@@ -354,7 +357,7 @@ def predict_masks_test():
                 for samples in utils.chunks(batch_input_samples, batch_size):
                     yield np.array(pool.map(process_sample, samples))
 
-        with utils.timeit_context('predict {} images, {}/{}, {:.1f}%'.format(
+        with utils.timeit_context('predict {} images, {}/{}, {:.1}%'.format(
                                   batch_size*save_batch_size, processed_samples, len(input_samples),
                                   100.0*processed_samples/len(input_samples))):
             predictions = model.predict_generator(generate_x(), steps=save_batch_size, verbose=1)
@@ -473,7 +476,8 @@ def find_ruler_points(avg_masks_dir=AVG_MASKS_DIR, res_suffix=''):
     angles['ruler_y0'] = points[:, 0, 1]
     angles['ruler_x1'] = points[:, 1, 0]
     angles['ruler_y1'] = points[:, 1, 1]
-    angles.to_csv('../output/ruler_points{}.csv'.format(res_suffix), index=False)
+    angles.to_csv('../output/ruler_points{}.csv'.format(res_suffix), index=False, columns=[
+        'video_id', 'ruler_angle', 'ruler_x0', 'ruler_y0', 'ruler_x1', 'ruler_y1'])
 
 
 def check_ruler_points():
@@ -565,8 +569,7 @@ if __name__ == '__main__':
     action = args.action
 
     if action == 'train':
-        train_unet(continue_from_epoch=8,
-                   weights='../output/checkpoints/mask_unet/model_unet1/checkpoint-best-007-0.0187.hdf5')
+        train_unet()
     elif action == 'check':
         check_unet(weights=args.weights)
     elif action == 'predict':
