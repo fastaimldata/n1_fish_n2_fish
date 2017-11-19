@@ -389,7 +389,8 @@ def find_ruler_rect(video_id, masks_dir='../output/ruler_masks', output_dir=AVG_
             continue
         masks.append(scipy.misc.imread(os.path.join(clip_dir, frame_name)))
 
-    all_masks = np.array(masks)
+    all_masks = np.array(masks).astype(np.float32)/255.0
+
     all_masks[all_masks < 0.1] = 0.0
     print(all_masks.shape)
     avg_mask = all_masks.mean(axis=0)
@@ -442,6 +443,8 @@ def find_ruler_points(avg_masks_dir=AVG_MASKS_DIR, res_suffix=''):
         mask = np.load(os.path.join(avg_masks_dir, video_id + '.npy'))
         h = 400
         w = 400
+        mask = mask.astype(np.float32) / 255.0
+        mask[mask < 0.05] = 0.0
         rotated, tform = rotate(mask, angle, dest_shape=(h, w))
 
         col = np.cumsum(np.mean(rotated, axis=0))
