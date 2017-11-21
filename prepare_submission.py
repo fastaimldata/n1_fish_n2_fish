@@ -124,7 +124,7 @@ def prepare_submission():
     print('load detections:')
     try:
         detections, classifications, fish_numbers = utils.load_data('../output/cache_submission_det_csl.pkl')
-        raise FileNotFoundError
+        raise FileNotFoundError  # TODO: does not worth to cache
     except FileNotFoundError:
         detections = {}
         for video_id in orig_submission.video_id.unique():

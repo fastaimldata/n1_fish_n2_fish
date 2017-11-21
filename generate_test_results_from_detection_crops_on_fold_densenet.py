@@ -6,10 +6,10 @@ folds = [int(f) for f in sys.argv[1].split(',')]
 print('folds:', folds)
 
 weights = {
-    1: '../output/checkpoints/classification/model_densenet161_ds3_fold_1/checkpoint-007-0.1063.hdf5',
-    2: '../output/checkpoints/classification/model_densenet161_ds3_fold_2/checkpoint-006-0.0963.hdf5',
-    3: '../output/checkpoints/classification/model_densenet161_ds3_fold_3/checkpoint-006-0.1370.hdf5',
-    4: '../output/checkpoints/classification/model_densenet161_ds3_fold_4/checkpoint-005-0.1209.hdf5'
+    1: '../output/checkpoints/classification/model_densenet161_ds3_fold_1/checkpoint-selected.hdf5',
+    2: '../output/checkpoints/classification/model_densenet161_ds3_fold_2/checkpoint-selected.hdf5',
+    3: '../output/checkpoints/classification/model_densenet161_ds3_fold_3/checkpoint-selected.hdf5',
+    4: '../output/checkpoints/classification/model_densenet161_ds3_fold_4/checkpoint-selected.hdf5'
 }
 
 flips = ['', '--hflip=1'] #, '--vflip=1', '--hflip=1 --vflip=1']

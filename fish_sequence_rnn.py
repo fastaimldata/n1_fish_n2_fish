@@ -305,7 +305,7 @@ def train(fold=1, use_cumsum=USE_CUMSUM, train_on_all_dataset=True):
     tensorboard = TensorBoard(tensorboard_dir, histogram_freq=0, write_graph=False, write_images=True)
     lr_sched = LearningRateScheduler(schedule=cheduler)
 
-    nb_epoch = 800
+    nb_epoch = 110
     batch_size = 128
 
     if train_on_all_dataset:
@@ -335,6 +335,7 @@ def train(fold=1, use_cumsum=USE_CUMSUM, train_on_all_dataset=True):
                         validation_data=validation_data,
                         validation_steps=validation_steps,
                         initial_epoch=0)
+    model.save_weights('../output/model_squence_gru1_cumsum.hdf5')
 
 
 def check(fold=1, use_cumsum=USE_CUMSUM):
@@ -348,7 +349,9 @@ def check(fold=1, use_cumsum=USE_CUMSUM):
     # model.load_weights('../output/checkpoints/sequence/model_squence_gru1_cumsum_fold_1/checkpoint-201-0.0484.hdf5')
     # model.load_weights('../output/checkpoints/sequence/model_squence_gru1_cumsum_fold_1/checkpoint-146-0.0509.hdf5')
     # model.load_weights('../output/checkpoints/sequence/model_squence_gru1_cumsum_fold_1/checkpoint-547-0.0439.hdf5')
-    model.load_weights('../output/checkpoints/sequence/model_squence_gru1_cumsum_all_fold_0/checkpoint-110-0.06723.hdf5')
+
+    # model.load_weights('../output/checkpoints/sequence/model_squence_gru1_cumsum_all_fold_0/checkpoint-110-0.06723.hdf5')
+    model.load_weights('../output/model_squence_gru1_cumsum.hdf5')
 
     for batch_x, yy in data.generate_test(batch_size=1, verbose=True, use_cumsum=use_cumsum):
         if use_cumsum:
@@ -400,7 +403,8 @@ def predict_test(output_dir):
                    is_test=True)
     max_size = 10000
     model = model_gru1_cumsum(input_shape=(max_size, NB_FEATURES), unroll=False)
-    model.load_weights('../output/checkpoints/sequence/model_squence_gru1_cumsum_all_fold_0/checkpoint-110-0.06723.hdf5')
+    # model.load_weights('../output/checkpoints/sequence/model_squence_gru1_cumsum_all_fold_0/checkpoint-110-0.06723.hdf5')
+    model.load_weights('../output/model_squence_gru1_cumsum.hdf5')
     os.makedirs(output_dir, exist_ok=True)
 
     video_ids = sorted(list(data.video_clips.keys()))

@@ -290,7 +290,7 @@ class SampleCfg:
         return dataset.CLASSES[self.fish_classification.species_class] + ' ' + str(self.__dict__)
 
 
-def load_ssd_detection(video_id, frame_id, data_dir='../output/predictions_ssd_roi2/vgg_41') -> SSDDetection:
+def load_ssd_detection(video_id, frame_id, data_dir='../output/predictions_ssd_roi2/resnet_53') -> SSDDetection:
     fn = os.path.join(data_dir, video_id, '{:04}.npy'.format(frame_id + 1))
     try:
         results = np.load(fn)
@@ -687,7 +687,7 @@ def train(fold, continue_from_epoch=0, weights='', batch_size=8, model_type='den
     utils.lock_layers_until(model, lock_layer2)
     model.summary()
 
-    nb_epoch = 4
+    nb_epoch = 10
     model.fit_generator(dataset.generate(batch_size=batch_size),
                         steps_per_epoch=dataset.train_batches(batch_size),
                         epochs=nb_epoch,
@@ -1015,7 +1015,9 @@ if __name__ == '__main__':
         generate_results_from_detection_crops_on_fold(fold=args.fold,
                                                       weights=args.weights,
                                                       crops_dir='../output/classification_crop/' + detection_model,
-                                                      output_dir='../output/classification_results/' + detection_model)
+                                                      output_dir='../output/classification_results/{}/{}/'.format(
+                                                          detection_model, classification_model),
+                                                      model_type=classification_model)
 
     if action == 'generate_test_results_from_detection_crops_on_fold':
         suffix = ''

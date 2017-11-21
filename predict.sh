@@ -1,5 +1,8 @@
-# find rulers
+#!/usr/bin/env bash
 
+set -x
+
+# find rulers
 # predict ruler masks, IndexError at the end is expected
 time python3 ruler_masks.py predict_test
 time python3 ruler_masks.py find_ruler_angles_test
@@ -13,10 +16,15 @@ time python3 ruler_masks.py generate_crops_test
 
 # detect fish using SSD detector
 
-python3 fish_detection_ssd.py generate_predictions_on_test_clips ../output/checkpoints/detect_ssd/ssd_resnet_720/checkpoint-053-0.1058.hdf5 resnet_53 0 700
-python3 fish_detection_ssd.py generate_predictions_on_test_clips ../output/checkpoints/detect_ssd/ssd_resnet_720/checkpoint-best-062-0.0635.hdf5 resnet_62 0 700
+# if using original trained model
+# python3 fish_detection_ssd.py generate_predictions_on_test_clips ../output/checkpoints/detect_ssd/ssd_resnet_720/checkpoint-053-0.1058.hdf5 resnet_53 0 700
+# python3 fish_detection_ssd.py generate_predictions_on_test_clips ../output/checkpoints/detect_ssd/ssd_resnet_720/checkpoint-best-062-0.0635.hdf5 resnet_62 0 700
 
-# generate grops with fish used by classification networks
+# if using new trained model
+python3 fish_detection_ssd.py generate_predictions_on_test_clips ../output/checkpoints/detect_ssd/ssd_resnet_720/checkpoint-023*.hdf5 resnet_53 0 700
+python3 fish_detection_ssd.py generate_predictions_on_test_clips ../output/checkpoints/detect_ssd/ssd_resnet_720/checkpoint-045*.hdf5 resnet_62 0 700
+
+# generate crops with fish used by classification networks
 
 python3 fish_classification.py generate_test_classification_crops --detection_model resnet_53
 python3 fish_classification.py generate_test_classification_crops --detection_model resnet_62
