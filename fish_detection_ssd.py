@@ -84,7 +84,7 @@ def priors_from_model(model):
     return all_priors
 
 
-def display_img_with_rects(img, results, res_idx=0, conf_threshold=0.1):
+def display_img_with_rects(img, results, res_idx=0, conf_threshold=0.075):
     if len(results[res_idx]) == 0:
         plt.imshow(img / 255.)
     else:
@@ -413,7 +413,7 @@ def train_resnet():
     os.makedirs(tensorboard_dir, exist_ok=True)
 
     model = build_resnet(input_shape=input_shape)
-    model.compile(loss=MultiboxLoss(NUM_CLASSES, neg_pos_ratio=2.0, pos_cost_multiplier=1.0).compute_loss,
+    model.compile(loss=MultiboxLoss(NUM_CLASSES, neg_pos_ratio=2.0, pos_cost_multiplier=1.1).compute_loss,
                   optimizer=Adam(lr=3e-5))
     model.summary()
     # model.load_weights('../output/checkpoints/detect_ssd/ssd_resnet_720/checkpoint-best-018-0.2318.hdf5')

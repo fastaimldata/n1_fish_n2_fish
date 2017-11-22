@@ -67,8 +67,12 @@ python3 fish_sequence_rnn.py train_full
 for fold in 1 2 3 4
 do
     python3 fish_classification.py train --fold ${fold} --classification_model inception
+done
 
-    # let's choose checkpoint 004 for inception v3 model, to be used by prediction stage
+
+# let's choose checkpoint 004 for inception v3 model, to be used by prediction stage
+for fold in 1 2 3 4
+do
     pushd ../output/checkpoints/classification/model_inception_fold_${fold}
     ln -s checkpoint-004-*.hdf5 checkpoint-selected.hdf5
     popd

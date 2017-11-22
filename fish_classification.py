@@ -307,7 +307,7 @@ def load_ssd_detection(video_id, frame_id, data_dir='../output/predictions_ssd_r
     det_ymin = results[:, 3]
     det_xmax = results[:, 4]
     det_ymax = results[:, 5]
-    top_indices_conf = sorted([(conf, i) for i, conf in enumerate(det_conf) if conf >= 0.1], reverse=True)
+    top_indices_conf = sorted([(conf, i) for i, conf in enumerate(det_conf) if conf >= 0.075], reverse=True)
     if len(top_indices_conf) == 0:
         return None
 
@@ -873,7 +873,11 @@ def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, outp
     batch_size = 8
     for video_id in video_ids:
         src_dir = os.path.join(crops_dir, video_id)
-        files = [f for f in sorted(os.listdir(src_dir)) if f.endswith('.jpg')]
+        try:
+            files = [f for f in sorted(os.listdir(src_dir)) if f.endswith('.jpg')]
+        except FileNotFoundError:
+            print('Warning: no images found in ', src_dir)
+            files = []
 
         def load_data():
             for batch_files in utils.chunks(files, batch_size):
@@ -913,8 +917,12 @@ def generate_results_from_detection_crops_on_fold(fold, weights, crops_dir, outp
         df = pd.DataFrame({'frame': frames})
         df['video_id'] = video_id
 
-        results_species = np.row_stack(results_species)
-        results_cover = np.row_stack(results_cover)
+        if len(results_species) == 0:
+            results_species = np.zeros((0, len(SPECIES_CLASSES)))
+            results_cover = np.zeros((0, len(COVER_CLASSES)))
+        else:
+            results_species = np.row_stack(results_species)
+            results_cover = np.row_stack(results_cover)
 
         for i, species_cls in enumerate(SPECIES_CLASSES):
             df['species_' + species_cls] = results_species[:, i]
