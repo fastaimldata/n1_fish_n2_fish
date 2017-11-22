@@ -452,12 +452,14 @@ def find_ruler_points(avg_masks_dir=AVG_MASKS_DIR, res_suffix=''):
         row = np.cumsum(np.mean(rotated, axis=1))
         row /= row[-1]
 
-        col0 = np.where(col > 0.02)[0][0]
-        col1 = np.where(col < 0.98)[0][-1]
+        # find area with 88% of detected pixels, and extend it by 20%
+        # it allows to remove false positives
+        col0 = np.where(col > 0.06)[0][0]
+        col1 = np.where(col < 0.94)[0][-1]
         row0 = np.where(row > 0.5)[0][0]
 
-        col0 -= (col1 - col0) * 0.05
-        col1 += (col1 - col0) * 0.05
+        col0 -= (col1 - col0) * 0.1
+        col1 += (col1 - col0) * 0.1
         # print(col0, col1, row0)
 
         # find transform back to mask
